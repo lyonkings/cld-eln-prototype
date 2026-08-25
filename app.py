@@ -45,7 +45,7 @@ if 'hierarchy' not in st.session_state:
         'campaign': 'CMP-Q3-ScaleUp'
     }
 
-# Default locked construct state
+# Default locked construct blueprint
 if 'locked_construct' not in st.session_state:
     st.session_state.locked_construct = {
         'substance': 'SUB-0000000025 (anti-CD20 rituximab-fab)',
@@ -53,6 +53,10 @@ if 'locked_construct' not in st.session_state:
         'vector': 'RTX-RD-SEQ-001 (Polycistronic / GS)',
         'ratio': '1:2'
     }
+
+# Key tracking for cascading LC:HC selectbox in Phase 2
+if 'phase2_ratio_select' not in st.session_state:
+    st.session_state.phase2_ratio_select = st.session_state.locked_construct['ratio']
 
 def initialize_empty_plate(format_name):
     config = PLATE_FORMATS[format_name]
@@ -74,7 +78,7 @@ def initialize_empty_plate(format_name):
                 'locus': 'None', 'sgrna': 'None', 'cas': 'None', 
                 'off_target_score': 0.0,
                 'monoclonality_verified': False,
-                'vcd': 0.0, 'titer': 0.0,
+                'vcd': 0.0, 'titer': 0.0, # Strictly zero until ingestion
                 'g0f_pct': 0.0, 'g1f_pct': 0.0, 'g2f_pct': 0.0, 'man5_pct': 0.0,
                 'charge_main_pct': 0.0, 'charge_acidic_pct': 0.0, 'charge_basic_pct': 0.0,
                 'ambr_ph': 7.10, 'ambr_do_pct': 40.0, 'ambr_temp_c': 36.5
@@ -237,7 +241,7 @@ t1, t2, t3, t4 = st.tabs([
 ])
 
 # ---------------------------------------------------------
-# PHASE 1: CONSTRUCT & MODALITY COMPLEXITY (Clean & Connected)
+# PHASE 1: CONSTRUCT & MODALITY COMPLEXITY
 # ---------------------------------------------------------
 with t1:
     st.markdown("### Upstream Construct Engineering & Transfection Pools")
@@ -254,7 +258,7 @@ with t1:
             lc_hc_ratio = st.select_slider(
                 "Light Chain to Heavy Chain (LC:HC) Plasmid Ratio",
                 options=["1:3", "1:2", "1:1", "2:1", "3:1"],
-                value="1:2",
+                value=st.session_state.locked_construct['ratio'],
                 help="Varying LC:HC plasmid ratios optimizes folding and prevents heavy-chain toxicity."
             )
             
@@ -265,6 +269,8 @@ with t1:
                     'vector': vector_type,
                     'ratio': lc_hc_ratio
                 }
+                # Instantly update Phase 2 selectbox key so it cascades smoothly
+                st.session_state.phase2_ratio_select = lc_hc_ratio
                 st.success("Construct blueprint locked into session state!")
 
     with c2:
@@ -290,16 +296,18 @@ with t2:
     
     with col_form:
         st.markdown(f"### Bulk Layout Designer")
+        st.caption(f"Active Blueprint: **{lc['substance'].split()[0]}** | **{lc['host'].split()[0]}** | **Ratio {lc['ratio']}**")
+        
         with st.form("bulk_assignment_form"):
             target_rows = st.multiselect("Target Rows (Empty = All)", current_config["rows"])
             target_cols = st.multiselect("Target Columns (Empty = All)", current_config["cols"])
             well_type = st.selectbox("Well Designation", ["Sample", "Pos Control", "Neg Control", "Blank", "Unassigned"])
             
-            # Default to the LC:HC ratio locked in Phase 1
+            # Cascaded ratio selection tied reactively to Phase 1
             ratio_choice = st.selectbox(
                 "LC:HC Ratio Assignment", 
                 ["1:3", "1:2", "1:1", "2:1", "3:1"],
-                index=["1:3", "1:2", "1:1", "2:1", "3:1"].index(lc['ratio'])
+                key="phase2_ratio_select"
             )
             
             if st.form_submit_button("Apply Rules to Vessel Map", use_container_width=True):
@@ -315,6 +323,10 @@ with t2:
                     df.loc[mask, 'host'] = lc['host']
                     df.loc[mask, 'vector'] = lc['vector']
                     
+                    # Ensure VCD & Titer are explicitly ZERO until instrument data ingestion
+                    df.loc[mask, 'vcd'] = 0.0
+                    df.loc[mask, 'titer'] = 0.0
+                    
                     for idx in df[mask].index:
                         well_name = df.loc[idx, 'well']
                         if df.loc[idx, 'clone_id'] is None:
@@ -322,6 +334,7 @@ with t2:
                             df.loc[idx, 'parent_beacon_pen'] = f"BCN-PEN-{random.randint(100,999)}"
                             df.loc[idx, 'ambr_vessel_id'] = f"AMBR15-Vessel-{well_name}"
                             
+                            # CQA baseline targets (Populated post-characterization)
                             g0f = round(random.uniform(68.0, 78.0), 1)
                             g1f = round(random.uniform(12.0, 18.0), 1)
                             g2f = round(random.uniform(3.0, 7.0), 1)
@@ -340,9 +353,14 @@ with t2:
                             df.loc[idx, 'charge_acidic_pct'] = acidic_p
                             df.loc[idx, 'charge_basic_pct'] = basic_p
                 else:
+                    df.loc[mask, 'substance'] = 'None'
+                    df.loc[mask, 'host'] = 'None'
+                    df.loc[mask, 'vector'] = 'None'
                     df.loc[mask, 'clone_id'] = None
                     df.loc[mask, 'parent_beacon_pen'] = None
                     df.loc[mask, 'ambr_vessel_id'] = None
+                    df.loc[mask, 'vcd'] = 0.0
+                    df.loc[mask, 'titer'] = 0.0
                     
                 st.session_state.plate_df = df
                 st.rerun()
@@ -359,11 +377,13 @@ with t2:
 with t3:
     st.markdown("### Automated Lineage & AMBR Connectors")
     
-    with st.expander("🤖 Ingest AMBR Microbioreactor Run File (CSV)", expanded=False):
+    with st.expander("🤖 Ingest AMBR Microbioreactor Run File (CSV)", expanded=True):
         ac1, ac2 = st.columns(2)
         with ac1:
+            st.markdown("**Step 1: Download Instrument Run File**")
             st.download_button("📥 Download Mock AMBR CSV", data=generate_mock_ambr_csv(), file_name="ambr_run_data.csv", mime="text/csv", use_container_width=True)
         with ac2:
+            st.markdown("**Step 2: Upload Processed Run Log**")
             uploaded_ambr = st.file_uploader("Upload AMBR File", type=['csv'], label_visibility="collapsed")
             if uploaded_ambr is not None:
                 try:
@@ -371,7 +391,7 @@ with t3:
                     curr_df = st.session_state.plate_df.set_index('well')
                     curr_df.update(df_up)
                     st.session_state.plate_df = curr_df.reset_index()
-                    st.success("AMBR Bioreactor metrics successfully ingested!")
+                    st.success("AMBR Bioreactor metrics (VCD & Titer) successfully ingested!")
                 except Exception as e:
                     st.error(f"Error parsing AMBR file: {e}")
 
@@ -397,6 +417,13 @@ with t3:
                 * **Day 14 (96-Deep Well Plate):** Transitioned to Well `{w_data['well']}`
                 * **Day 25 (AMBR 15 Microbioreactor):** Vessel `{w_data['ambr_vessel_id'] or f'AMBR15-Vessel-{sel_well}'}` (pH: {w_data['ambr_ph']}, DO: {w_data['ambr_do_pct']}%)
                 """)
+                
+                # Live metric status
+                if w_data['vcd'] == 0.0 and w_data['titer'] == 0.0:
+                    st.info("⏳ **Status:** Awaiting AMBR Bioreactor Data Ingestion (VCD: 0.0, Titer: 0.0)")
+                else:
+                    st.success(f"📊 **Ingested Data:** VCD = {w_data['vcd']} x10⁶ cells/mL | Titer = {w_data['titer']} mg/L")
+                
                 st.success("Monoclonality Audit: 100% Verified (Image Proof #IMG-9042)")
 
 # ---------------------------------------------------------
