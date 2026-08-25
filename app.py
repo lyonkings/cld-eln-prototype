@@ -59,22 +59,26 @@ def initialize_empty_plate(format_name):
                 'well_type': 'Unassigned',
                 'clone_id': None,
                 'parent_beacon_pen': None,
+                'ambr_vessel_id': None,
                 'substance': 'None', 'host': 'None', 'vector': 'None', 
                 'lc_hc_ratio': '1:1', 'codon_optimized': True,
                 'locus': 'None', 'sgrna': 'None', 'cas': 'None', 
                 'off_target_score': 0.0,
                 'monoclonality_verified': False,
                 'vcd': 0.0, 'titer': 0.0,
-                'g0f_pct': 0.0, 'g1f_pct': 0.0,
-                'charge_main_pct': 0.0, 'charge_acidic_pct': 0.0,
-                'ambr_ph': 7.1, 'ambr_do_pct': 40.0, 'ambr_temp_c': 36.5
+                # Glycoforms
+                'g0f_pct': 0.0, 'g1f_pct': 0.0, 'g2f_pct': 0.0, 'man5_pct': 0.0,
+                # Charge Variants
+                'charge_main_pct': 0.0, 'charge_acidic_pct': 0.0, 'charge_basic_pct': 0.0,
+                # AMBR Bioreactor Parameters
+                'ambr_ph': 7.10, 'ambr_do_pct': 40.0, 'ambr_temp_c': 36.5
             })
     return pd.DataFrame(data)
 
 if 'selected_format' not in st.session_state:
     st.session_state.selected_format = "96-Well Plate (12x8)"
 
-if 'plate_df' not in st.session_state or 'lc_hc_ratio' not in st.session_state.plate_df.columns:
+if 'plate_df' not in st.session_state or 'ambr_vessel_id' not in st.session_state.plate_df.columns:
     st.session_state.plate_df = initialize_empty_plate(st.session_state.selected_format)
 
 # ==========================================
@@ -91,8 +95,8 @@ def generate_mock_ambr_csv():
     df.loc[active_mask, 'titer'] = np.round(np.random.uniform(25.0, 220.0, size=active_mask.sum()), 1)
     df.loc[active_mask, 'ambr_ph'] = np.round(np.random.uniform(6.95, 7.20, size=active_mask.sum()), 2)
     df.loc[active_mask, 'ambr_do_pct'] = np.round(np.random.uniform(35.0, 45.0, size=active_mask.sum()), 1)
-    df.loc[active_mask, 'g0f_pct'] = np.round(np.random.uniform(65.0, 85.0, size=active_mask.sum()), 1)
-    df.loc[active_mask, 'charge_main_pct'] = np.round(np.random.uniform(60.0, 78.0, size=active_mask.sum()), 1)
+    df.loc[active_mask, 'g0f_pct'] = np.round(np.random.uniform(65.0, 80.0, size=active_mask.sum()), 1)
+    df.loc[active_mask, 'charge_main_pct'] = np.round(np.random.uniform(60.0, 75.0, size=active_mask.sum()), 1)
     
     return df.loc[active_mask, ['well', 'vcd', 'titer', 'ambr_ph', 'ambr_do_pct', 'g0f_pct', 'charge_main_pct']].to_csv(index=False)
 
@@ -104,7 +108,7 @@ def generate_jmp_export():
     active_df['Study'] = st.session_state.hierarchy['study']
     active_df['Campaign'] = st.session_state.hierarchy['campaign']
     
-    cols = ['Project', 'Study', 'Campaign', 'well', 'clone_id', 'parent_beacon_pen', 
+    cols = ['Project', 'Study', 'Campaign', 'well', 'clone_id', 'parent_beacon_pen', 'ambr_vessel_id',
             'substance', 'host', 'vector', 'lc_hc_ratio', 'vcd', 'titer', 
             'g0f_pct', 'charge_main_pct', 'ambr_ph']
     return active_df[cols].to_csv(index=False)
@@ -186,6 +190,7 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
         plot_bgcolor='white', paper_bgcolor='white',
         margin=dict(l=20, r=20, t=30, b=20), height=520,
         clickmode='event+select',
+        dragmode=False, # Restores intuitive single-click pointer behavior
         hovermode='closest'
     )
     
@@ -222,7 +227,7 @@ t1, t2, t3, t4 = st.tabs([
     "🧬 Phase 1: Construct & Pool Design", 
     "🧫 Phase 2: Vessel & Plate Designer", 
     "🌳 Phase 3: Lineage & AMBR Ingestion", 
-    "📈 Phase 4: 70-Day Stability & CQAs"
+    "📈 Phase 4: Critical Quality Attributes (CQAs)"
 ])
 
 # ---------------------------------------------------------
@@ -292,20 +297,42 @@ with t2:
                     df.loc[mask, 'vector'] = "RTX-RD-SEQ-001"
                     
                     for idx in df[mask].index:
+                        well_name = df.loc[idx, 'well']
                         if df.loc[idx, 'clone_id'] is None:
-                            well_name = df.loc[idx, 'well']
                             df.loc[idx, 'clone_id'] = f"CLN-{well_name}-{random.randint(1000,9999)}"
                             df.loc[idx, 'parent_beacon_pen'] = f"BCN-PEN-{random.randint(100,999)}"
+                            # Unique AMBR vessel mapping per clone
+                            df.loc[idx, 'ambr_vessel_id'] = f"AMBR15-Vessel-{well_name}"
+                            
+                            # CQA mock values
+                            g0f = round(random.uniform(68.0, 78.0), 1)
+                            g1f = round(random.uniform(12.0, 18.0), 1)
+                            g2f = round(random.uniform(3.0, 7.0), 1)
+                            man5 = round(100.0 - (g0f + g1f + g2f), 1)
+                            
+                            main_p = round(random.uniform(62.0, 74.0), 1)
+                            acidic_p = round(random.uniform(18.0, 26.0), 1)
+                            basic_p = round(100.0 - (main_p + acidic_p), 1)
+                            
+                            df.loc[idx, 'g0f_pct'] = g0f
+                            df.loc[idx, 'g1f_pct'] = g1f
+                            df.loc[idx, 'g2f_pct'] = g2f
+                            df.loc[idx, 'man5_pct'] = man5
+                            
+                            df.loc[idx, 'charge_main_pct'] = main_p
+                            df.loc[idx, 'charge_acidic_pct'] = acidic_p
+                            df.loc[idx, 'charge_basic_pct'] = basic_p
                 else:
                     df.loc[mask, 'clone_id'] = None
                     df.loc[mask, 'parent_beacon_pen'] = None
+                    df.loc[mask, 'ambr_vessel_id'] = None
                     
                 st.session_state.plate_df = df
                 st.rerun()
 
     with col_map:
         st.markdown(f"### Live Seeding Map ({st.session_state.selected_format})")
-        st.caption("💡 Click any individual well directly, or use the Box/Lasso select tools on the top-right toolbar.")
+        st.caption("💡 Click any well directly to inspect, or use the Box/Lasso tools on the toolbar.")
         st.markdown("<span style='color:#196F3D'>■ Sample</span> | <span style='color:#2980B9'>■ Pos Control</span> | <span style='color:#E74C3C'>■ Neg Control</span> | <span style='color:#F1C40F'>■ Blank</span>", unsafe_allow_html=True)
         render_plate_map(st.session_state.plate_df, st.session_state.selected_format, mode="design", chart_key="map_phase2")
 
@@ -313,7 +340,7 @@ with t2:
 # PHASE 3: LINEAGE & AMBR BIOREACTOR INGESTION
 # ---------------------------------------------------------
 with t3:
-    st.markdown("### Automated Lineage Pedigree & AMBR Connectors")
+    st.markdown("### Automated Lineage & AMBR Connectors")
     
     with st.expander("🤖 Ingest AMBR Microbioreactor Run File (CSV)", expanded=False):
         ac1, ac2 = st.columns(2)
@@ -336,9 +363,9 @@ with t3:
         selected_wells_p3 = render_plate_map(st.session_state.plate_df, st.session_state.selected_format, mode="analytics", chart_key="map_phase3")
         
     with col_pedigree:
-        st.markdown("### Clone Pedigree Tree")
+        st.markdown("### Clone Lineage")
         if not selected_wells_p3:
-            st.info("👈 Click or select a well on the map to trace its automated single-cell scale-up pedigree.")
+            st.info("👈 Click or select a well on the map to trace its automated single-cell scale-up lineage.")
         else:
             sel_well = selected_wells_p3[0]
             w_data = st.session_state.plate_df[st.session_state.plate_df['well'] == sel_well].iloc[0]
@@ -351,15 +378,16 @@ with t3:
                 * **Day 0 (Beacon Optofluidics):** Single-cell penned in `{w_data['parent_beacon_pen'] or 'BCN-PEN-402'}` (VIPS Verified Monoclonal)
                 * **Day 7 (384-Well Plate):** Expanded in Well `C12`
                 * **Day 14 (96-Deep Well Plate):** Transitioned to Well `{w_data['well']}`
-                * **Day 25 (AMBR 15 Bioreactor):** Vessel `AMBR-V12` (pH: {w_data['ambr_ph']}, DO: {w_data['ambr_do_pct']}%)
+                * **Day 25 (AMBR 15 Microbioreactor):** Vessel `{w_data['ambr_vessel_id'] or f'AMBR15-Vessel-{sel_well}'}` (pH: {w_data['ambr_ph']}, DO: {w_data['ambr_do_pct']}%)
                 """)
                 st.success("Monoclonality Audit: 100% Verified (Image Proof #IMG-9042)")
 
 # ---------------------------------------------------------
-# PHASE 4: 70-DAY STABILITY & CQAs
+# PHASE 4: CRITICAL QUALITY ATTRIBUTES (CQAs)
 # ---------------------------------------------------------
 with t4:
-    st.markdown("### 70-Day Stability Campaign & Critical Quality Attributes")
+    st.markdown("### Critical Quality Attribute (CQA) Characterization")
+    st.write("Evaluate post-translational modifications (Glycosylation) and Charge Variant distributions across selected lead clones.")
     
     col_m4, col_cqas = st.columns([1.2, 1])
     with col_m4:
@@ -367,22 +395,50 @@ with t4:
         
     with col_cqas:
         if not selected_wells_p4:
-            st.info("👈 Click or select a clone to visualize its 70-day growth curve and glycosylation profile.")
+            st.info("👈 Click a clone on the plate map to view its glycoform and charge variant analytical profiles.")
         else:
             sel_w = selected_wells_p4[0]
             w_info = st.session_state.plate_df[st.session_state.plate_df['well'] == sel_w].iloc[0]
             
             if w_info['well_type'] in ['Sample', 'Pos Control']:
-                st.markdown(f"#### Clone Analytics: `{w_info['clone_id']}`")
+                st.markdown(f"#### CQA Analytics: `{w_info['clone_id']}` ({sel_w})")
                 
-                days = np.array([0, 7, 14, 21, 28, 35, 42, 49, 56, 63, 70])
-                base_titer = w_info['titer'] if w_info['titer'] > 0 else 100.0
-                titer_curve = np.round(base_titer * (1 - np.exp(-0.05 * days)), 1)
+                # Fetch CQA values
+                g0f = w_info['g0f_pct'] if w_info['g0f_pct'] > 0 else 72.4
+                g1f = w_info['g1f_pct'] if w_info['g1f_pct'] > 0 else 15.1
+                g2f = w_info['g2f_pct'] if w_info['g2f_pct'] > 0 else 5.3
+                man5 = w_info['man5_pct'] if w_info['man5_pct'] > 0 else 7.2
                 
-                fig_stability = px.line(x=days, y=titer_curve, labels={'x': 'Stability Campaign (Days)', 'y': 'Titer (mg/L)'}, title="70-Day Expression Stability Profile")
-                st.plotly_chart(fig_stability, use_container_width=True, key="stability_chart")
+                main_p = w_info['charge_main_pct'] if w_info['charge_main_pct'] > 0 else 68.2
+                acidic_p = w_info['charge_acidic_pct'] if w_info['charge_acidic_pct'] > 0 else 22.4
+                basic_p = w_info['charge_basic_pct'] if w_info['charge_basic_pct'] > 0 else 9.4
                 
-                st.markdown("**Critical Quality Attributes (CQAs)**")
-                cq1, cq2 = st.columns(2)
-                cq1.metric("Glycosylation (% G0F)", f"{w_info['g0f_pct'] if w_info['g0f_pct']>0 else 74.2}%")
-                cq2.metric("Charge Variant (% Main)", f"{w_info['charge_main_pct'] if w_info['charge_main_pct']>0 else 68.5}%")
+                # Chart 1: Glycoform Relative Abundance
+                glyco_df = pd.DataFrame({
+                    'Glycoform': ['% G0F', '% G1F', '% G2F', '% High-Man5'],
+                    'Abundance (%)': [g0f, g1f, g2f, man5]
+                })
+                fig_glyco = px.bar(
+                    glyco_df, x='Glycoform', y='Abundance (%)',
+                    title="N-Glycosylation Profile (LC-MS)",
+                    color='Glycoform',
+                    color_discrete_sequence=['#2E86C1', '#28B463', '#F39C12', '#E74C3C'],
+                    text_auto='.1f'
+                )
+                fig_glyco.update_layout(showlegend=False, height=240, margin=dict(l=10, r=10, t=35, b=10))
+                st.plotly_chart(fig_glyco, use_container_width=True, key="cqa_glyco_chart")
+                
+                # Chart 2: Charge Variant Distribution
+                charge_df = pd.DataFrame({
+                    'Variant': ['% Main Peak', '% Acidic', '% Basic'],
+                    'Percentage (%)': [main_p, acidic_p, basic_p]
+                })
+                fig_charge = px.bar(
+                    charge_df, x='Percentage (%)', y='Variant', orientation='h',
+                    title="Charge Heterogeneity (iCE3 / cIEF)",
+                    color='Variant',
+                    color_discrete_sequence=['#1ABC9C', '#9B59B6', '#E67E22'],
+                    text_auto='.1f'
+                )
+                fig_charge.update_layout(showlegend=False, height=220, margin=dict(l=10, r=10, t=35, b=10))
+                st.plotly_chart(fig_charge, use_container_width=True, key="cqa_charge_chart")
