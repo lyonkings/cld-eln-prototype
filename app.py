@@ -45,18 +45,28 @@ if 'hierarchy' not in st.session_state:
         'campaign': 'CMP-Q3-ScaleUp'
     }
 
-# Default locked construct blueprint
-if 'locked_construct' not in st.session_state:
-    st.session_state.locked_construct = {
-        'substance': 'SUB-0000000025 (anti-CD20 rituximab-fab)',
-        'host': 'HST-CHO-S (CHO-K1 derivative)',
-        'vector': 'RTX-RD-SEQ-001 (Polycistronic / GS)',
-        'ratio': '1:2'
+# Phase 1: Construct Library (Pre-loaded with DoE presets for instant sales demo)
+if 'construct_library' not in st.session_state:
+    st.session_state.construct_library = {
+        "Preset A (Equimolar 1:1)": {
+            'substance': 'SUB-0000000025 (anti-CD20 rituximab-fab)',
+            'host': 'HST-CHO-S (CHO-K1 derivative)',
+            'vector': 'RTX-RD-SEQ-001 (Polycistronic / GS)',
+            'ratio': '1:1'
+        },
+        "Preset B (LC Excess 1:2)": {
+            'substance': 'SUB-0000000025 (anti-CD20 rituximab-fab)',
+            'host': 'HST-CHO-S (CHO-K1 derivative)',
+            'vector': 'RTX-RD-SEQ-001 (Polycistronic / GS)',
+            'ratio': '1:2'
+        },
+        "Preset C (Bispecific 2:1)": {
+            'substance': 'SUB-0000000026 (anti-HER2 bispecific)',
+            'host': 'HST-CHO-DG44 (DHFR deficient)',
+            'vector': 'RTX-RD-SEQ-002 (Monocistronic / DHFR)',
+            'ratio': '2:1'
+        }
     }
-
-# Key tracking for cascading LC:HC selectbox in Phase 2
-if 'phase2_ratio_select' not in st.session_state:
-    st.session_state.phase2_ratio_select = st.session_state.locked_construct['ratio']
 
 def initialize_empty_plate(format_name):
     config = PLATE_FORMATS[format_name]
@@ -73,12 +83,13 @@ def initialize_empty_plate(format_name):
                 'clone_id': None,
                 'parent_beacon_pen': None,
                 'ambr_vessel_id': None,
+                'preset_name': 'None',
                 'substance': 'None', 'host': 'None', 'vector': 'None', 
-                'lc_hc_ratio': '1:1',
+                'lc_hc_ratio': 'None',
                 'locus': 'None', 'sgrna': 'None', 'cas': 'None', 
                 'off_target_score': 0.0,
                 'monoclonality_verified': False,
-                'vcd': 0.0, 'titer': 0.0, # Strictly zero until ingestion
+                'vcd': 0.0, 'titer': 0.0,
                 'g0f_pct': 0.0, 'g1f_pct': 0.0, 'g2f_pct': 0.0, 'man5_pct': 0.0,
                 'charge_main_pct': 0.0, 'charge_acidic_pct': 0.0, 'charge_basic_pct': 0.0,
                 'ambr_ph': 7.10, 'ambr_do_pct': 40.0, 'ambr_temp_c': 36.5
@@ -88,7 +99,7 @@ def initialize_empty_plate(format_name):
 if 'selected_format' not in st.session_state:
     st.session_state.selected_format = "96-Well Plate (12x8)"
 
-if 'plate_df' not in st.session_state or 'ambr_vessel_id' not in st.session_state.plate_df.columns:
+if 'plate_df' not in st.session_state or 'preset_name' not in st.session_state.plate_df.columns:
     st.session_state.plate_df = initialize_empty_plate(st.session_state.selected_format)
 
 # ==========================================
@@ -119,7 +130,7 @@ def generate_jmp_export():
     active_df['Campaign'] = st.session_state.hierarchy['campaign']
     
     cols = ['Project', 'Study', 'Campaign', 'well', 'clone_id', 'parent_beacon_pen', 'ambr_vessel_id',
-            'substance', 'host', 'vector', 'lc_hc_ratio', 'vcd', 'titer', 
+            'preset_name', 'substance', 'host', 'vector', 'lc_hc_ratio', 'vcd', 'titer', 
             'g0f_pct', 'charge_main_pct', 'ambr_ph']
     return active_df[cols].to_csv(index=False)
 
@@ -180,9 +191,23 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
     colors = df['well_type'].map(color_map).tolist()
     text_colors = df['well_type'].apply(lambda x: '#7F8C8D' if x == 'Unassigned' else 'white').tolist()
     
-    hover_text = df.apply(
-        lambda r: f"<b>{r['clone_id'] or r['well']}</b><br>Type: {r['well_type']}<br>Ratio: {r['lc_hc_ratio']}<br>VCD: {r['vcd']}<br>Titer: {r['titer']}", axis=1
-    ).tolist()
+    def build_hover_text(r):
+        if r['well_type'] in ['Sample', 'Pos Control', 'Neg Control']:
+            return (
+                f"<b>{r['clone_id'] or r['well']} ({r['well']})</b><br>"
+                f"Type: {r['well_type']}<br>"
+                f"<b>Preset:</b> {r['preset_name']}<br>"
+                f"<b>Substance:</b> {r['substance']}<br>"
+                f"<b>LC:HC Ratio:</b> {r['lc_hc_ratio']}<br>"
+                f"<b>VCD:</b> {r['vcd']} x10⁶/mL<br>"
+                f"<b>Titer:</b> {r['titer']} mg/L"
+            )
+        elif r['well_type'] == 'Blank':
+            return f"<b>Well {r['well']}</b><br>Type: Blank"
+        else:
+            return f"<b>Well {r['well']}</b><br>Type: Unassigned"
+
+    hover_text = df.apply(build_hover_text, axis=1).tolist()
 
     fig = go.Figure(data=go.Scatter(
         x=df['col'], y=df['row'],
@@ -234,23 +259,24 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
 # 5. MAIN WORKFLOW TABS
 # ==========================================
 t1, t2, t3, t4 = st.tabs([
-    "🧬 Phase 1: Construct & Pool Design", 
+    "🧬 Phase 1: Construct Library", 
     "🧫 Phase 2: Vessel & Plate Designer", 
     "🌳 Phase 3: Lineage & AMBR Ingestion", 
     "📈 Phase 4: Critical Quality Attributes (CQAs)"
 ])
 
 # ---------------------------------------------------------
-# PHASE 1: CONSTRUCT & MODALITY COMPLEXITY
+# PHASE 1: CONSTRUCT LIBRARY (Multi-Blueprint DoE Manager)
 # ---------------------------------------------------------
 with t1:
-    st.markdown("### Upstream Construct Engineering & Transfection Pools")
-    st.write("Define your target drug molecule, host line, vector system, and plasmid ratios before layout design.")
+    st.markdown("### Upstream Construct Engineering & DoE Library")
+    st.write("Save multiple construct blueprints with varying plasmid ratios to test multi-variable DoE conditions on your microplates.")
     
-    c1, c2 = st.columns(2)
+    c1, c2 = st.columns([1.2, 1])
     with c1:
-        with st.form("construct_form"):
-            st.markdown("**Plasmid Pool & Transfection Parameters**")
+        with st.form("add_construct_form"):
+            st.markdown("**Add / Save New Construct Preset**")
+            preset_title = st.text_input("Preset Name", value="Preset D (Custom Ratio)")
             substance = st.selectbox("Target Substance", ["SUB-0000000025 (anti-CD20 rituximab-fab)", "SUB-0000000026 (anti-HER2 bispecific)"])
             host = st.selectbox("Host Cell Line", ["HST-CHO-S (CHO-K1 derivative)", "HST-CHO-DG44 (DHFR deficient)"])
             vector_type = st.selectbox("Vector System", ["RTX-RD-SEQ-001 (Polycistronic / GS)", "RTX-RD-SEQ-002 (Monocistronic / DHFR)"])
@@ -258,72 +284,67 @@ with t1:
             lc_hc_ratio = st.select_slider(
                 "Light Chain to Heavy Chain (LC:HC) Plasmid Ratio",
                 options=["1:3", "1:2", "1:1", "2:1", "3:1"],
-                value=st.session_state.locked_construct['ratio'],
-                help="Varying LC:HC plasmid ratios optimizes folding and prevents heavy-chain toxicity."
+                value="1:2"
             )
             
-            if st.form_submit_button("Lock Construct Blueprint for Study"):
-                st.session_state.locked_construct = {
+            if st.form_submit_button("➕ Save Preset to Construct Library"):
+                st.session_state.construct_library[preset_title] = {
                     'substance': substance,
                     'host': host,
                     'vector': vector_type,
                     'ratio': lc_hc_ratio
                 }
-                # Instantly update Phase 2 selectbox key so it cascades smoothly
-                st.session_state.phase2_ratio_select = lc_hc_ratio
-                st.success("Construct blueprint locked into session state!")
+                st.success(f"Preset '{preset_title}' saved to construct library!")
+                st.rerun()
 
     with c2:
-        st.markdown("**Active Construct Blueprint**")
-        st.write("This blueprint automatically populates the default settings when you design your microplates in Phase 2.")
+        st.markdown("**Saved Construct Presets**")
+        st.caption("These presets are available in Phase 2 for well assignment.")
         
-        lc = st.session_state.locked_construct
-        st.info(f"""
-        **Current Locked Construct Configuration:**
-        * **Target Substance:** `{lc['substance']}`
-        * **Host Cell Line:** `{lc['host']}`
-        * **Vector System:** `{lc['vector']}`
-        * **LC:HC Ratio:** `{lc['ratio']}`
-        """)
+        for name, details in st.session_state.construct_library.items():
+            with st.expander(f"📌 {name}", expanded=True):
+                st.markdown(f"**Substance:** `{details['substance']}`")
+                st.markdown(f"**Host Line:** `{details['host']}`")
+                st.markdown(f"**Vector System:** `{details['vector']}`")
+                st.markdown(f"**LC:HC Ratio:** `{details['ratio']}`")
 
 # ---------------------------------------------------------
-# PHASE 2: PLATE DESIGNER
+# PHASE 2: PLATE DESIGNER (Assign Any Preset to Wells)
 # ---------------------------------------------------------
 with t2:
     col_form, col_map = st.columns([1, 2])
     current_config = PLATE_FORMATS[st.session_state.selected_format]
-    lc = st.session_state.locked_construct
     
     with col_form:
         st.markdown(f"### Bulk Layout Designer")
-        st.caption(f"Active Blueprint: **{lc['substance'].split()[0]}** | **{lc['host'].split()[0]}** | **Ratio {lc['ratio']}**")
         
         with st.form("bulk_assignment_form"):
             target_rows = st.multiselect("Target Rows (Empty = All)", current_config["rows"])
             target_cols = st.multiselect("Target Columns (Empty = All)", current_config["cols"])
             well_type = st.selectbox("Well Designation", ["Sample", "Pos Control", "Neg Control", "Blank", "Unassigned"])
             
-            # Cascaded ratio selection tied reactively to Phase 1
-            ratio_choice = st.selectbox(
-                "LC:HC Ratio Assignment", 
-                ["1:3", "1:2", "1:1", "2:1", "3:1"],
-                key="phase2_ratio_select"
+            # Select from saved Phase 1 construct blueprints
+            selected_preset_key = st.selectbox(
+                "Select Construct Blueprint from Phase 1 Library", 
+                list(st.session_state.construct_library.keys())
             )
             
-            if st.form_submit_button("Apply Rules to Vessel Map", use_container_width=True):
+            if st.form_submit_button("Apply Blueprint to Vessel Map", use_container_width=True):
                 df = st.session_state.plate_df
                 r_mask = df['row'].isin(target_rows) if target_rows else pd.Series([True]*len(df))
                 c_mask = df['col'].isin(target_cols) if target_cols else pd.Series([True]*len(df))
                 mask = r_mask & c_mask
                 
+                chosen_preset = st.session_state.construct_library[selected_preset_key]
+                
                 df.loc[mask, 'well_type'] = well_type
                 if well_type in ['Sample', 'Pos Control', 'Neg Control']:
-                    df.loc[mask, 'lc_hc_ratio'] = ratio_choice
-                    df.loc[mask, 'substance'] = lc['substance']
-                    df.loc[mask, 'host'] = lc['host']
-                    df.loc[mask, 'vector'] = lc['vector']
+                    df.loc[mask, 'preset_name'] = selected_preset_key
+                    df.loc[mask, 'lc_hc_ratio'] = chosen_preset['ratio']
+                    df.loc[mask, 'substance'] = chosen_preset['substance']
+                    df.loc[mask, 'host'] = chosen_preset['host']
+                    df.loc[mask, 'vector'] = chosen_preset['vector']
                     
-                    # Ensure VCD & Titer are explicitly ZERO until instrument data ingestion
                     df.loc[mask, 'vcd'] = 0.0
                     df.loc[mask, 'titer'] = 0.0
                     
@@ -334,7 +355,6 @@ with t2:
                             df.loc[idx, 'parent_beacon_pen'] = f"BCN-PEN-{random.randint(100,999)}"
                             df.loc[idx, 'ambr_vessel_id'] = f"AMBR15-Vessel-{well_name}"
                             
-                            # CQA baseline targets (Populated post-characterization)
                             g0f = round(random.uniform(68.0, 78.0), 1)
                             g1f = round(random.uniform(12.0, 18.0), 1)
                             g2f = round(random.uniform(3.0, 7.0), 1)
@@ -353,6 +373,7 @@ with t2:
                             df.loc[idx, 'charge_acidic_pct'] = acidic_p
                             df.loc[idx, 'charge_basic_pct'] = basic_p
                 else:
+                    df.loc[mask, 'preset_name'] = 'None'
                     df.loc[mask, 'substance'] = 'None'
                     df.loc[mask, 'host'] = 'None'
                     df.loc[mask, 'vector'] = 'None'
@@ -412,13 +433,13 @@ with t3:
             else:
                 st.markdown(f"**Tracing Lineage for Clone:** `{w_data['clone_id']}`")
                 st.markdown(f"""
+                * **Construct Blueprint:** `{w_data['preset_name']}` (Ratio: `{w_data['lc_hc_ratio']}`)
                 * **Day 0 (Beacon Optofluidics):** Single-cell penned in `{w_data['parent_beacon_pen'] or 'BCN-PEN-402'}` (VIPS Verified Monoclonal)
                 * **Day 7 (384-Well Plate):** Expanded in Well `C12`
                 * **Day 14 (96-Deep Well Plate):** Transitioned to Well `{w_data['well']}`
                 * **Day 25 (AMBR 15 Microbioreactor):** Vessel `{w_data['ambr_vessel_id'] or f'AMBR15-Vessel-{sel_well}'}` (pH: {w_data['ambr_ph']}, DO: {w_data['ambr_do_pct']}%)
                 """)
                 
-                # Live metric status
                 if w_data['vcd'] == 0.0 and w_data['titer'] == 0.0:
                     st.info("⏳ **Status:** Awaiting AMBR Bioreactor Data Ingestion (VCD: 0.0, Titer: 0.0)")
                 else:
@@ -446,6 +467,7 @@ with t4:
             
             if w_info['well_type'] in ['Sample', 'Pos Control']:
                 st.markdown(f"#### CQA Analytics: `{w_info['clone_id']}` ({sel_w})")
+                st.caption(f"Construct Blueprint: **{w_info['preset_name']}** (LC:HC Ratio **{w_info['lc_hc_ratio']}**)")
                 
                 g0f = w_info['g0f_pct'] if w_info['g0f_pct'] > 0 else 72.4
                 g1f = w_info['g1f_pct'] if w_info['g1f_pct'] > 0 else 15.1
