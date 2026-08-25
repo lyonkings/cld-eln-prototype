@@ -11,7 +11,6 @@ import datetime
 # ==========================================
 st.set_page_config(page_title="Enterprise CLD ELN Platform", layout="wide", page_icon="🧬")
 
-# Vessel geometry definitions (Rows, Columns, Marker Size)
 PLATE_FORMATS = {
     "384-Well Plate (24x16)": {
         "rows": list('ABCDEFGHIJKLMNOP'),
@@ -47,7 +46,6 @@ if 'hierarchy' not in st.session_state:
     }
 
 def initialize_empty_plate(format_name):
-    """Generates an empty plate layout with rich biotech metadata structures."""
     config = PLATE_FORMATS[format_name]
     rows = config["rows"]
     cols = config["cols"]
@@ -67,10 +65,8 @@ def initialize_empty_plate(format_name):
                 'off_target_score': 0.0,
                 'monoclonality_verified': False,
                 'vcd': 0.0, 'titer': 0.0,
-                # CQAs
                 'g0f_pct': 0.0, 'g1f_pct': 0.0,
                 'charge_main_pct': 0.0, 'charge_acidic_pct': 0.0,
-                # AMBR Metrics
                 'ambr_ph': 7.1, 'ambr_do_pct': 40.0, 'ambr_temp_c': 36.5
             })
     return pd.DataFrame(data)
@@ -85,7 +81,6 @@ if 'plate_df' not in st.session_state or 'lc_hc_ratio' not in st.session_state.p
 # 2. HELPER & DATA GENERATION MODULES
 # ==========================================
 def generate_mock_ambr_csv():
-    """Generates automated AMBR microbioreactor run logs."""
     df = st.session_state.plate_df.copy()
     active_mask = df['well_type'].isin(['Sample', 'Pos Control', 'Neg Control'])
     
@@ -102,7 +97,6 @@ def generate_mock_ambr_csv():
     return df.loc[active_mask, ['well', 'vcd', 'titer', 'ambr_ph', 'ambr_do_pct', 'g0f_pct', 'charge_main_pct']].to_csv(index=False)
 
 def generate_jmp_export():
-    """Generates a JMP-ready wide-format dataset for bioprocess data scientists."""
     df = st.session_state.plate_df.copy()
     active_df = df[df['well_type'].isin(['Sample', 'Pos Control', 'Neg Control'])].copy()
     
@@ -125,7 +119,6 @@ def calculate_specific_productivity(vcd, titer):
 with st.sidebar:
     st.title("🧬 CLD Hierarchy & Vessel")
     
-    # Project / Study / Campaign Search & Navigation
     st.markdown("**Hierarchy Scope**")
     st.session_state.hierarchy['project'] = st.selectbox("Project", ["PRJ-mAb-001 (Anti-CD20)", "PRJ-bsAb-002 (Anti-HER2/CD3)"])
     st.session_state.hierarchy['study'] = st.selectbox("Study", ["STD-2026-Transfection-Opt", "STD-2026-Stability-Pass"])
@@ -133,7 +126,6 @@ with st.sidebar:
     
     st.divider()
     
-    # Vessel Format Selector (Includes 384-Well Plate)
     chosen_format = st.selectbox(
         "Microplate Density:", 
         list(PLATE_FORMATS.keys()),
@@ -148,7 +140,6 @@ with st.sidebar:
     st.caption(f"Active Format: {len(st.session_state.plate_df)} Total Wells")
     st.divider()
     
-    # JMP Export Button
     st.subheader("📊 Statistical Export")
     st.download_button(
         "📥 Export JMP-Formatted Dataset",
@@ -161,15 +152,15 @@ with st.sidebar:
 # ==========================================
 # 4. UI COMPONENT: DYNAMIC PLOTLY MAP
 # ==========================================
-def render_plate_map(df, format_name, mode="analytics"):
+def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
     config = PLATE_FORMATS[format_name]
     
     color_map = {
-        'Sample': '#196F3D',       # Dark Green
-        'Pos Control': '#2980B9',  # Blue
-        'Neg Control': '#E74C3C',  # Red
-        'Blank': '#F1C40F',        # Yellow
-        'Unassigned': '#E5E7E9'    # Light Grey
+        'Sample': '#196F3D',       
+        'Pos Control': '#2980B9',  
+        'Neg Control': '#E74C3C',  
+        'Blank': '#F1C40F',        
+        'Unassigned': '#E5E7E9'    
     }
     
     colors = df['well_type'].map(color_map).tolist()
@@ -182,7 +173,7 @@ def render_plate_map(df, format_name, mode="analytics"):
     fig = go.Figure(data=go.Scatter(
         x=df['col'], y=df['row'],
         mode='markers+text', 
-        text=df['well'] if "384" not in format_name else None, # Hide text on 384-well to avoid visual clutter
+        text=df['well'] if "384" not in format_name else None, 
         textfont=dict(color=text_colors, size=9 if "384" in format_name else 11, family="Arial Black"),
         marker=dict(size=config["marker_size"], color=colors, line=dict(width=1 if "384" in format_name else 2, color='#BDC3C7')),
         hoverinfo='text', hovertext=hover_text
@@ -196,7 +187,14 @@ def render_plate_map(df, format_name, mode="analytics"):
         clickmode='event+select', dragmode='select', hovermode='closest'
     )
     
-    event = st.plotly_chart(fig, use_container_width=True, on_select="rerun", selection_mode=["points", "lasso", "box"])
+    # Passed unique key parameter prevents StreamlitDuplicateElementId error
+    event = st.plotly_chart(
+        fig, 
+        use_container_width=True, 
+        on_select="rerun", 
+        selection_mode=["points", "lasso", "box"],
+        key=chart_key
+    )
     
     selected_wells = []
     if event and hasattr(event, "selection") and event.selection:
@@ -226,7 +224,7 @@ t1, t2, t3, t4 = st.tabs([
 ])
 
 # ---------------------------------------------------------
-# PHASE 1: CONSTRUCT & MODALITY COMPLEXITY (Amgen Requirements)
+# PHASE 1: CONSTRUCT & MODALITY COMPLEXITY
 # ---------------------------------------------------------
 with t1:
     st.markdown("### Upstream Construct Engineering & Transfection Pools")
@@ -240,7 +238,6 @@ with t1:
             host = st.selectbox("Host Cell Line", ["HST-CHO-S (CHO-K1 derivative)", "HST-CHO-DG44 (DHFR deficient)"])
             vector_type = st.selectbox("Vector System", ["RTX-RD-SEQ-001 (Polycistronic / GS)", "RTX-RD-SEQ-002 (Monocistronic / DHFR)"])
             
-            # Amgen Specific Gap: LC:HC Ratios
             lc_hc_ratio = st.select_slider(
                 "Light Chain to Heavy Chain (LC:HC) Plasmid Ratio",
                 options=["1:3", "1:2", "1:1", "2:1", "3:1"],
@@ -265,7 +262,7 @@ with t1:
         })
 
 # ---------------------------------------------------------
-# PHASE 2: PLATE DESIGNER (Supports 384, 96, 24, 6-well)
+# PHASE 2: PLATE DESIGNER
 # ---------------------------------------------------------
 with t2:
     col_form, col_map = st.columns([1, 2])
@@ -307,7 +304,7 @@ with t2:
     with col_map:
         st.markdown(f"### Live Seeding Map ({st.session_state.selected_format})")
         st.markdown("<span style='color:#196F3D'>■ Sample</span> | <span style='color:#2980B9'>■ Pos Control</span> | <span style='color:#E74C3C'>■ Neg Control</span> | <span style='color:#F1C40F'>■ Blank</span>", unsafe_allow_html=True)
-        render_plate_map(st.session_state.plate_df, st.session_state.selected_format, mode="design")
+        render_plate_map(st.session_state.plate_df, st.session_state.selected_format, mode="design", chart_key="map_phase2")
 
 # ---------------------------------------------------------
 # PHASE 3: LINEAGE & AMBR BIOREACTOR INGESTION
@@ -333,7 +330,7 @@ with t3:
 
     col_m3, col_pedigree = st.columns([1.3, 1])
     with col_m3:
-        selected_wells_p3 = render_plate_map(st.session_state.plate_df, st.session_state.selected_format, mode="analytics")
+        selected_wells_p3 = render_plate_map(st.session_state.plate_df, st.session_state.selected_format, mode="analytics", chart_key="map_phase3")
         
     with col_pedigree:
         st.markdown("### Clone Pedigree Tree")
@@ -348,7 +345,6 @@ with t3:
             else:
                 st.markdown(f"**Tracing Lineage for Clone:** `{w_data['clone_id']}`")
                 
-                # Visual Lineage Hierarchy
                 st.markdown(f"""
                 * **Day 0 (Beacon Optofluidics):** Single-cell penned in `{w_data['parent_beacon_pen'] or 'BCN-PEN-402'}` (VIPS Verified Monoclonal)
                 * **Day 7 (384-Well Plate):** Expanded in Well `C12`
@@ -358,14 +354,14 @@ with t3:
                 st.success("Monoclonality Audit: 100% Verified (Image Proof #IMG-9042)")
 
 # ---------------------------------------------------------
-# PHASE 4: 70-DAY STABILITY & CRITICAL QUALITY ATTRIBUTES (CQAs)
+# PHASE 4: 70-DAY STABILITY & CQAs
 # ---------------------------------------------------------
 with t4:
     st.markdown("### 70-Day Stability Campaign & Critical Quality Attributes")
     
     col_m4, col_cqas = st.columns([1.2, 1])
     with col_m4:
-        selected_wells_p4 = render_plate_map(st.session_state.plate_df, st.session_state.selected_format, mode="analytics")
+        selected_wells_p4 = render_plate_map(st.session_state.plate_df, st.session_state.selected_format, mode="analytics", chart_key="map_phase4")
         
     with col_cqas:
         if not selected_wells_p4:
@@ -377,15 +373,13 @@ with t4:
             if w_info['well_type'] in ['Sample', 'Pos Control']:
                 st.markdown(f"#### Clone Analytics: `{w_info['clone_id']}`")
                 
-                # Simulated 70-Day Time-Series Growth Curve
                 days = np.array([0, 7, 14, 21, 28, 35, 42, 49, 56, 63, 70])
                 base_titer = w_info['titer'] if w_info['titer'] > 0 else 100.0
                 titer_curve = np.round(base_titer * (1 - np.exp(-0.05 * days)), 1)
                 
                 fig_stability = px.line(x=days, y=titer_curve, labels={'x': 'Stability Campaign (Days)', 'y': 'Titer (mg/L)'}, title="70-Day Expression Stability Profile")
-                st.plotly_chart(fig_stability, use_container_width=True)
+                st.plotly_chart(fig_stability, use_container_width=True, key="stability_chart")
                 
-                # Critical Quality Attributes (CQAs)
                 st.markdown("**Critical Quality Attributes (CQAs)**")
                 cq1, cq2 = st.columns(2)
                 cq1.metric("Glycosylation (% G0F)", f"{w_info['g0f_pct'] if w_info['g0f_pct']>0 else 74.2}%")
