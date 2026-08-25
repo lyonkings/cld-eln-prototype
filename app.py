@@ -45,6 +45,15 @@ if 'hierarchy' not in st.session_state:
         'campaign': 'CMP-Q3-ScaleUp'
     }
 
+# Default locked construct state
+if 'locked_construct' not in st.session_state:
+    st.session_state.locked_construct = {
+        'substance': 'SUB-0000000025 (anti-CD20 rituximab-fab)',
+        'host': 'HST-CHO-S (CHO-K1 derivative)',
+        'vector': 'RTX-RD-SEQ-001 (Polycistronic / GS)',
+        'ratio': '1:2'
+    }
+
 def initialize_empty_plate(format_name):
     config = PLATE_FORMATS[format_name]
     rows = config["rows"]
@@ -61,16 +70,13 @@ def initialize_empty_plate(format_name):
                 'parent_beacon_pen': None,
                 'ambr_vessel_id': None,
                 'substance': 'None', 'host': 'None', 'vector': 'None', 
-                'lc_hc_ratio': '1:1', 'codon_optimized': True,
+                'lc_hc_ratio': '1:1',
                 'locus': 'None', 'sgrna': 'None', 'cas': 'None', 
                 'off_target_score': 0.0,
                 'monoclonality_verified': False,
                 'vcd': 0.0, 'titer': 0.0,
-                # Glycoforms
                 'g0f_pct': 0.0, 'g1f_pct': 0.0, 'g2f_pct': 0.0, 'man5_pct': 0.0,
-                # Charge Variants
                 'charge_main_pct': 0.0, 'charge_acidic_pct': 0.0, 'charge_basic_pct': 0.0,
-                # AMBR Bioreactor Parameters
                 'ambr_ph': 7.10, 'ambr_do_pct': 40.0, 'ambr_temp_c': 36.5
             })
     return pd.DataFrame(data)
@@ -190,7 +196,7 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
         plot_bgcolor='white', paper_bgcolor='white',
         margin=dict(l=20, r=20, t=30, b=20), height=520,
         clickmode='event+select',
-        dragmode=False, # Restores intuitive single-click pointer behavior
+        dragmode=False,
         hovermode='closest'
     )
     
@@ -231,11 +237,11 @@ t1, t2, t3, t4 = st.tabs([
 ])
 
 # ---------------------------------------------------------
-# PHASE 1: CONSTRUCT & MODALITY COMPLEXITY
+# PHASE 1: CONSTRUCT & MODALITY COMPLEXITY (Clean & Connected)
 # ---------------------------------------------------------
 with t1:
     st.markdown("### Upstream Construct Engineering & Transfection Pools")
-    st.write("Configure vector architectures, light-to-heavy chain ratios, and codon optimization logs prior to seeding.")
+    st.write("Define your target drug molecule, host line, vector system, and plasmid ratios before layout design.")
     
     c1, c2 = st.columns(2)
     with c1:
@@ -249,24 +255,30 @@ with t1:
                 "Light Chain to Heavy Chain (LC:HC) Plasmid Ratio",
                 options=["1:3", "1:2", "1:1", "2:1", "3:1"],
                 value="1:2",
-                help="Varying LC:HC plasmid ratios optimizes folding and eliminates free heavy-chain toxicity."
+                help="Varying LC:HC plasmid ratios optimizes folding and prevents heavy-chain toxicity."
             )
             
-            codon_opt = st.checkbox("Apply CHO Codon Optimization Algorithm", value=True)
-            
-            if st.form_submit_button("Lock Construct Configuration for Study"):
-                st.success(f"Construct Locked: {substance} | Host: {host} | LC:HC Ratio: {lc_hc_ratio}")
+            if st.form_submit_button("Lock Construct Blueprint for Study"):
+                st.session_state.locked_construct = {
+                    'substance': substance,
+                    'host': host,
+                    'vector': vector_type,
+                    'ratio': lc_hc_ratio
+                }
+                st.success("Construct blueprint locked into session state!")
 
     with c2:
-        st.markdown("**In-House Vector Optimization Log**")
-        st.info("Codon Optimization Summary Log (#OPT-8842)")
-        st.json({
-            "Parent Amino Acid Sequence": "EVQLVESGGGLVQPGGSLRLSCAASGFTFS...",
-            "Host Organism": "Cricetulus griseus (CHO)",
-            "GC Content Adjustment": "42% ➔ 58% (Optimized)",
-            "Repeated Motif Removal": "12 Hairpins Eliminated",
-            "Predicted Expression Delta": "+34% vs Wildtype"
-        })
+        st.markdown("**Active Construct Blueprint**")
+        st.write("This blueprint automatically populates the default settings when you design your microplates in Phase 2.")
+        
+        lc = st.session_state.locked_construct
+        st.info(f"""
+        **Current Locked Construct Configuration:**
+        * **Target Substance:** `{lc['substance']}`
+        * **Host Cell Line:** `{lc['host']}`
+        * **Vector System:** `{lc['vector']}`
+        * **LC:HC Ratio:** `{lc['ratio']}`
+        """)
 
 # ---------------------------------------------------------
 # PHASE 2: PLATE DESIGNER
@@ -274,6 +286,7 @@ with t1:
 with t2:
     col_form, col_map = st.columns([1, 2])
     current_config = PLATE_FORMATS[st.session_state.selected_format]
+    lc = st.session_state.locked_construct
     
     with col_form:
         st.markdown(f"### Bulk Layout Designer")
@@ -281,7 +294,13 @@ with t2:
             target_rows = st.multiselect("Target Rows (Empty = All)", current_config["rows"])
             target_cols = st.multiselect("Target Columns (Empty = All)", current_config["cols"])
             well_type = st.selectbox("Well Designation", ["Sample", "Pos Control", "Neg Control", "Blank", "Unassigned"])
-            ratio_choice = st.selectbox("LC:HC Ratio Assignment", ["1:1", "1:2", "2:1"])
+            
+            # Default to the LC:HC ratio locked in Phase 1
+            ratio_choice = st.selectbox(
+                "LC:HC Ratio Assignment", 
+                ["1:3", "1:2", "1:1", "2:1", "3:1"],
+                index=["1:3", "1:2", "1:1", "2:1", "3:1"].index(lc['ratio'])
+            )
             
             if st.form_submit_button("Apply Rules to Vessel Map", use_container_width=True):
                 df = st.session_state.plate_df
@@ -292,19 +311,17 @@ with t2:
                 df.loc[mask, 'well_type'] = well_type
                 if well_type in ['Sample', 'Pos Control', 'Neg Control']:
                     df.loc[mask, 'lc_hc_ratio'] = ratio_choice
-                    df.loc[mask, 'substance'] = "SUB-0000000025 (anti-CD20)"
-                    df.loc[mask, 'host'] = "HST-CHO-S"
-                    df.loc[mask, 'vector'] = "RTX-RD-SEQ-001"
+                    df.loc[mask, 'substance'] = lc['substance']
+                    df.loc[mask, 'host'] = lc['host']
+                    df.loc[mask, 'vector'] = lc['vector']
                     
                     for idx in df[mask].index:
                         well_name = df.loc[idx, 'well']
                         if df.loc[idx, 'clone_id'] is None:
                             df.loc[idx, 'clone_id'] = f"CLN-{well_name}-{random.randint(1000,9999)}"
                             df.loc[idx, 'parent_beacon_pen'] = f"BCN-PEN-{random.randint(100,999)}"
-                            # Unique AMBR vessel mapping per clone
                             df.loc[idx, 'ambr_vessel_id'] = f"AMBR15-Vessel-{well_name}"
                             
-                            # CQA mock values
                             g0f = round(random.uniform(68.0, 78.0), 1)
                             g1f = round(random.uniform(12.0, 18.0), 1)
                             g2f = round(random.uniform(3.0, 7.0), 1)
@@ -403,7 +420,6 @@ with t4:
             if w_info['well_type'] in ['Sample', 'Pos Control']:
                 st.markdown(f"#### CQA Analytics: `{w_info['clone_id']}` ({sel_w})")
                 
-                # Fetch CQA values
                 g0f = w_info['g0f_pct'] if w_info['g0f_pct'] > 0 else 72.4
                 g1f = w_info['g1f_pct'] if w_info['g1f_pct'] > 0 else 15.1
                 g2f = w_info['g2f_pct'] if w_info['g2f_pct'] > 0 else 5.3
@@ -413,7 +429,6 @@ with t4:
                 acidic_p = w_info['charge_acidic_pct'] if w_info['charge_acidic_pct'] > 0 else 22.4
                 basic_p = w_info['charge_basic_pct'] if w_info['charge_basic_pct'] > 0 else 9.4
                 
-                # Chart 1: Glycoform Relative Abundance
                 glyco_df = pd.DataFrame({
                     'Glycoform': ['% G0F', '% G1F', '% G2F', '% High-Man5'],
                     'Abundance (%)': [g0f, g1f, g2f, man5]
@@ -428,7 +443,6 @@ with t4:
                 fig_glyco.update_layout(showlegend=False, height=240, margin=dict(l=10, r=10, t=35, b=10))
                 st.plotly_chart(fig_glyco, use_container_width=True, key="cqa_glyco_chart")
                 
-                # Chart 2: Charge Variant Distribution
                 charge_df = pd.DataFrame({
                     'Variant': ['% Main Peak', '% Acidic', '% Basic'],
                     'Percentage (%)': [main_p, acidic_p, basic_p]
