@@ -8,7 +8,7 @@ import datetime
 # ==========================================
 # 1. APPLICATION CONFIGURATION & STATE
 # ==========================================
-st.set_page_config(page_title="CLD ELN Prototype", layout="wide", page_icon="🧬")
+st.set_page_config(page_title="CLD ELN Prototype (Sales PoC)", layout="wide", page_icon="🧬")
 
 if 'hierarchy' not in st.session_state:
     st.session_state.hierarchy = {
@@ -17,128 +17,88 @@ if 'hierarchy' not in st.session_state:
         'run': 'RUN-045-Beacon-Transfection'
     }
 
-def initialize_plate_state():
+def initialize_empty_plate():
+    """Generates a blank 96-well plate ready for the Plate Designer."""
     rows = list('ABCDEFGH')
     cols = list(range(1, 13))
-    
-    substances = ['SUB-0000000025 (anti-CD20 rituximab-fab)', 'SUB-0000000026 (anti-HER2 bispecific)']
-    hosts = ['HST-CHO-S', 'HST-CHO-K1']
-    vectors = ['RTX-RD-SEQ-000 (Monocistronic)', 'RTX-RD-SEQ-001 (Polycistronic / GS)', 'RTX-RD-SEQ-002 (Polycistronic / DHFR)']
-    loci = ['TRAC', 'Rosa26']
-    sgrnas = ['UCGACUGACUGCUAGCUAGC', 'GCTAGCUCGACUGACUGCUA']
-    cases = ['SpCas9', 'LeriCas9']
     
     data = []
     for r in rows:
         for c in cols:
             well = f"{r}{c}"
-            is_seeded = bool(np.random.choice([True, False], p=[0.7, 0.3]))
-            
-            if is_seeded:
-                data.append({
-                    'well': well, 'row': r, 'col': c, 'seeded': True,
-                    'clone_id': f"CLN-{well}-{random.randint(1000,9999)}",
-                    'substance': random.choice(substances), 'host': random.choice(hosts),
-                    'vector': random.choice(vectors), 'locus': random.choice(loci),
-                    'sgrna': random.choice(sgrnas), 'cas': random.choice(cases),
-                    'off_target_score': round(float(np.random.uniform(0.1, 3.5)), 2),
-                    'monoclonality_verified': bool(np.random.choice([True, False])),
-                    'vcd': round(float(np.random.uniform(2.5, 15.0)), 2),
-                    'titer': round(float(np.random.uniform(10.0, 150.0)), 1)
-                })
-            else:
-                data.append({
-                    'well': well, 'row': r, 'col': c, 'seeded': False, 'clone_id': None,
-                    'substance': None, 'host': None, 'vector': None, 
-                    'locus': None, 'sgrna': None, 'cas': None, 
-                    'off_target_score': None, 'monoclonality_verified': False,
-                    'vcd': 0.0, 'titer': 0.0
-                })
+            data.append({
+                'well': well, 'row': r, 'col': c, 
+                'well_type': 'Unassigned', # Unassigned, Sample, Blank, Pos Control, Neg Control
+                'clone_id': None,
+                'substance': 'None', 'host': 'None', 'vector': 'None', 
+                'locus': 'None', 'sgrna': 'None', 'cas': 'None', 
+                'off_target_score': 0.0,
+                'monoclonality_verified': False,
+                'vcd': 0.0, 'titer': 0.0
+            })
     return pd.DataFrame(data)
 
-if 'plate_df' not in st.session_state or 'clone_id' not in st.session_state.plate_df.columns:
-    st.session_state.plate_df = initialize_plate_state()
+if 'plate_df' not in st.session_state or 'well_type' not in st.session_state.plate_df.columns:
+    st.session_state.plate_df = initialize_empty_plate()
 
 # ==========================================
 # 2. CORE ARCHITECTURE MODULES
 # ==========================================
 def generate_mock_hamilton_csv():
-    df = st.session_state.plate_df
-    seeded_df = df[df['seeded'] == True].copy()
-    seeded_df['vcd'] = np.round(np.random.uniform(2.5, 15.0, size=len(seeded_df)), 2)
-    seeded_df['titer'] = np.round(np.random.uniform(10.0, 150.0, size=len(seeded_df)), 1)
-    return seeded_df[['well', 'vcd', 'titer']].to_csv(index=False)
+    df = st.session_state.plate_df.copy()
+    # Only generate data for wells that actually contain cells
+    active_mask = df['well_type'].isin(['Sample', 'Pos Control', 'Neg Control'])
+    
+    df.loc[active_mask, 'vcd'] = np.round(np.random.uniform(2.5, 15.0, size=active_mask.sum()), 2)
+    df.loc[active_mask, 'titer'] = np.round(np.random.uniform(10.0, 150.0, size=active_mask.sum()), 1)
+    
+    # Let Neg Controls have terrible/zero titer for realism
+    neg_mask = df['well_type'] == 'Neg Control'
+    df.loc[neg_mask, 'titer'] = np.round(np.random.uniform(0.0, 2.0, size=neg_mask.sum()), 1)
+    
+    return df.loc[active_mask, ['well', 'vcd', 'titer']].to_csv(index=False)
 
 def handle_csv_upload(uploaded_file):
     try:
         df_upload = pd.read_csv(uploaded_file)
-        if not all(col in df_upload.columns for col in ['well', 'vcd', 'titer']):
-            st.sidebar.error("CSV must contain 'well', 'vcd', and 'titer'.")
-            return
-        
         current_df = st.session_state.plate_df.set_index('well')
         df_upload = df_upload.set_index('well')
         current_df.update(df_upload)
         st.session_state.plate_df = current_df.reset_index()
-        st.sidebar.success("Instrument data successfully ingested!")
+        st.success("Instrument data successfully ingested!")
     except Exception as e:
-        st.sidebar.error(f"Error parsing file: {e}")
+        st.error(f"Error parsing file: {e}")
 
 def calculate_specific_productivity(vcd, titer):
     if vcd == 0: return 0.0
-    qp = (titer / (vcd * 10)) * 1.5 
-    return round(qp, 2)
-
-def generate_clonality_report(well_data):
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    return f"""
-    # IND Regulatory Clonality Report
-    **Generated:** {timestamp}
-    **Project Hierarchy:** {st.session_state.hierarchy['project']} > {st.session_state.hierarchy['campaign']}
-    
-    ## 1. Clone Identity
-    - Clone ID: {well_data['clone_id']}
-    - Well Location: {well_data['well']}
-    - Host Line: {well_data['host']}
-    
-    ## 2. Vector & Genetic Footprint
-    - Substance: {well_data['substance']}
-    - Vector Sequence: {well_data['vector']}
-    - CRISPR Locus: {well_data['locus']}
-    - Cas Enzyme: {well_data['cas']}
-    """
+    return round((titer / (vcd * 10)) * 1.5, 2)
 
 # ==========================================
-# 3. SIDEBAR
+# 3. UI COMPONENT: DYNAMIC PLOTLY PLATE MAP
 # ==========================================
-with st.sidebar:
-    st.title("🧬 CLD Workflow")
-    if st.button("🚀 Execute Day 14 Transfer (96 to 24-DWP)"):
-        st.success("Plate Scaling Engine Triggered: Mapped 96-well seeding to 4x 24-Deep Well Plates.")
-        st.balloons()
-        
-    st.divider()
-    st.subheader("🤖 Instrument Data Ingestion")
-    st.download_button("📥 Download Mock Hamilton CSV", data=generate_mock_hamilton_csv(), file_name="hamilton_export.csv", mime="text/csv")
+def render_plate_map(df, mode="analytics"):
+    """Renders the plate map. mode can be 'design' (colors by type) or 'analytics' (standard)."""
     
-    uploaded_file = st.file_uploader("Upload Run File (CSV)", type=['csv'])
-    if uploaded_file is not None:
-        if st.button("Process & Update Plate"):
-            handle_csv_upload(uploaded_file)
-
-# ==========================================
-# 4. UI COMPONENT: INTERACTIVE PLOTLY PLATE MAP
-# ==========================================
-def render_interactive_plate_map(df):
-    colors = df['seeded'].apply(lambda x: '#196F3D' if x else '#E5E7E9').tolist()
-    text_colors = df['seeded'].apply(lambda x: 'white' if x else '#7F8C8D').tolist()
+    # Color coding based on well type for the designer narrative
+    color_map = {
+        'Sample': '#196F3D',       # Dark Green
+        'Pos Control': '#2980B9',  # Blue
+        'Neg Control': '#E74C3C',  # Red
+        'Blank': '#F1C40F',        # Yellow
+        'Unassigned': '#E5E7E9'    # Grey
+    }
     
-    hover_text = df.apply(
-        lambda r: f"<b>{r['clone_id']} ({r['well']})</b><br>" +
-                  f"Status: {'Seeded 🟢' if r['seeded'] else 'Empty ⚪'}<br>" +
-                  f"Locus: {r['locus']}<br>" +
-                  f"VCD: {r['vcd']}<br>Titer: {r['titer']}" if r['seeded'] else f"<b>Well {r['well']}</b><br>Empty ⚪", axis=1
-    ).tolist()
+    colors = df['well_type'].map(color_map).tolist()
+    text_colors = df['well_type'].apply(lambda x: '#7F8C8D' if x == 'Unassigned' else 'white').tolist()
+    
+    if mode == "design":
+        hover_text = df.apply(lambda r: f"<b>Well {r['well']}</b><br>Type: {r['well_type']}<br>Vector: {r['vector']}", axis=1).tolist()
+    else:
+        hover_text = df.apply(
+            lambda r: f"<b>{r['clone_id']} ({r['well']})</b><br>" +
+                      f"Type: {r['well_type']}<br>VCD: {r['vcd']}<br>Titer: {r['titer']}" 
+                      if r['well_type'] != 'Unassigned' else f"<b>Well {r['well']}</b><br>Unassigned", axis=1
+        ).tolist()
 
     fig = go.Figure(data=go.Scatter(
         x=df['col'], y=df['row'],
@@ -156,7 +116,6 @@ def render_interactive_plate_map(df):
         clickmode='event+select', dragmode='select', hovermode='closest'
     )
     
-    # Modern Streamlit native selection (Works perfectly on real servers)
     event = st.plotly_chart(fig, use_container_width=True, on_select="rerun", selection_mode=["points", "lasso", "box"])
     
     selected_wells = []
@@ -169,74 +128,143 @@ def render_interactive_plate_map(df):
     return list(set(selected_wells))
 
 # ==========================================
-# 5. MAIN APPLICATION LAYOUT
+# 4. MAIN APPLICATION & TABS
 # ==========================================
 st.markdown(f"""
-<div style='background-color: #F4F6F6; padding: 10px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #2980B9;'>
-    <b>Hierarchy:</b> {st.session_state.hierarchy['project']} ➔ {st.session_state.hierarchy['campaign']} ➔ {st.session_state.hierarchy['run']}
+<div style='background-color: #F4F6F6; padding: 10px; border-radius: 5px; margin-bottom: 10px; border-left: 4px solid #2980B9;'>
+    <b>ELN Hierarchy:</b> {st.session_state.hierarchy['project']} ➔ {st.session_state.hierarchy['campaign']} ➔ {st.session_state.hierarchy['run']}
 </div>
 """, unsafe_allow_html=True)
 
-col1, col2 = st.columns([1.5, 1])
+tab_design, tab_analytics = st.tabs(["🧪 Phase 1: Plate Designer", "📊 Phase 2: Cultivation & Analytics"])
 
-with col1:
-    st.markdown("### Interactive 2D Plate Map")
-    st.info("💡 **Tip:** Click on a well, or click the **Lasso/Box select tool** in the top-right corner of the map to drag over multiple wells!")
+# ---------------------------------------------------------
+# TAB 1: PLATE DESIGNER (Bulk Rule Assignment)
+# ---------------------------------------------------------
+with tab_design:
+    col_form, col_map = st.columns([1, 2])
     
-    selected_wells = render_interactive_plate_map(st.session_state.plate_df)
-
-with col2:
-    st.markdown("### Selection Details")
-    
-    if not selected_wells:
-        st.info("👈 Select a well or drag a box over the plate map to view metadata.")
+    with col_form:
+        st.markdown("### 📋 Bulk Rule Assignment")
+        st.write("Target specific rows and columns to rapidly map out the experimental design.")
         
-    elif len(selected_wells) == 1:
-        selected_well = selected_wells[0]
-        well_data = st.session_state.plate_df[st.session_state.plate_df['well'] == selected_well].iloc[0]
-        
-        st.markdown(f"**Viewing Well:** `{selected_well}` | **Clone ID:** `{well_data['clone_id']}`")
-        
-        if not well_data['seeded']:
-            st.warning(f"Well {selected_well} is unseeded (Empty).")
-        else:
-            with st.expander("🧬 Upstream Registration", expanded=True):
-                st.markdown(f"**Substance:** `{well_data['substance']}`")
-                st.markdown(f"**Host:** `{well_data['host']}`")
-                st.markdown(f"**Vector:** `{well_data['vector']}`")
-                
-            with st.expander("✂️ CRISPR Parameters", expanded=True):
-                st.markdown(f"**Locus:** `{well_data['locus']}` | **Cas:** `{well_data['cas']}`")
-                score = well_data['off_target_score']
-                color = "green" if score < 1.0 else ("orange" if score < 2.5 else "red")
-                st.markdown(f"**Off-Target:** <span style='color:{color}; font-weight:bold;'>{score}%</span>", unsafe_allow_html=True)
-
-            with st.expander("🧪 Stability & Analytics", expanded=True):
-                m1, m2, m3 = st.columns(3)
-                m1.metric("VCD", well_data['vcd'])
-                m2.metric("Titer", well_data['titer'])
-                m3.metric("qp", calculate_specific_productivity(well_data['vcd'], well_data['titer']))
-                
-            report_text = generate_clonality_report(well_data)
-            st.download_button("📄 Download IND Regulatory Report", data=report_text, file_name=f"IND_Report_{well_data['clone_id']}.txt", mime="text/plain", use_container_width=True)
-                
-    else:
-        st.markdown(f"**Viewing {len(selected_wells)} Selected Wells**")
-        multi_df = st.session_state.plate_df[st.session_state.plate_df['well'].isin(selected_wells)]
-        seeded_df = multi_df[multi_df['seeded'] == True]
-        
-        if len(seeded_df) == 0:
-            st.warning("All selected wells are empty.")
-        else:
-            st.success(f"{len(seeded_df)} seeded wells selected. Displaying aggregated view.")
-            st.dataframe(seeded_df[['well', 'clone_id', 'locus', 'vcd', 'titer']], hide_index=True, use_container_width=True)
+        with st.form("bulk_assignment_form"):
+            target_rows = st.multiselect("Target Rows (Leave blank for all)", list('ABCDEFGH'), default=['A', 'B'])
+            target_cols = st.multiselect("Target Columns (Leave blank for all)", list(range(1, 13)), default=[1, 2, 3, 4, 5, 6])
             
-            with st.form("bulk_edit_form"):
-                st.markdown("#### ✏️ Bulk Edit")
-                new_locus = st.selectbox("Target Locus", ["No Change", "TRAC", "Rosa26", "AAVS1"])
-                if st.form_submit_button("Apply to Selected Wells"):
-                    df = st.session_state.plate_df
-                    mask = df['well'].isin(selected_wells) & (df['seeded'] == True)
-                    if new_locus != "No Change": df.loc[mask, 'locus'] = new_locus
-                    st.session_state.plate_df = df
-                    st.rerun()
+            well_type = st.selectbox("Well Designation", ["Sample", "Pos Control", "Neg Control", "Blank", "Unassigned"])
+            
+            st.divider()
+            st.markdown("**Upstream Registry Linkage**")
+            substance = st.selectbox("Substance", ["SUB-0000000025 (anti-CD20)", "SUB-0000000026 (anti-HER2)", "None"])
+            host = st.selectbox("Host Line", ["HST-CHO-S", "HST-CHO-K1", "None"])
+            vector = st.selectbox("Vector", ["RTX-RD-SEQ-001 (Polycistronic / GS)", "RTX-RD-SEQ-002 (DHFR)", "Empty Vector (Control)", "None"])
+            
+            submit_rules = st.form_submit_button("Assign to Plate")
+            
+            if submit_rules:
+                df = st.session_state.plate_df
+                # If nothing selected, assume ALL
+                r_mask = df['row'].isin(target_rows) if target_rows else pd.Series([True]*len(df))
+                c_mask = df['col'].isin(target_cols) if target_cols else pd.Series([True]*len(df))
+                
+                mask = r_mask & c_mask
+                
+                df.loc[mask, 'well_type'] = well_type
+                if well_type in ['Sample', 'Pos Control', 'Neg Control']:
+                    df.loc[mask, 'substance'] = substance
+                    df.loc[mask, 'host'] = host
+                    df.loc[mask, 'vector'] = vector
+                    df.loc[mask, 'locus'] = 'TRAC' # Default mock
+                    df.loc[mask, 'sgrna'] = 'UCGACUGACUGCUAGCUAGC'
+                    df.loc[mask, 'cas'] = 'SpCas9'
+                    
+                    # Generate unique clone IDs for new samples
+                    for idx in df[mask].index:
+                        if df.loc[idx, 'clone_id'] is None:
+                            df.loc[idx, 'clone_id'] = f"CLN-{df.loc[idx, 'well']}-{random.randint(1000,9999)}"
+                else:
+                    # Clear metadata for Blanks/Unassigned
+                    df.loc[mask, 'substance'] = 'None'
+                    df.loc[mask, 'vector'] = 'None'
+                    df.loc[mask, 'clone_id'] = None
+                    
+                st.session_state.plate_df = df
+                st.rerun()
+                
+        if st.button("🗑️ Reset Plate to Empty", use_container_width=True):
+            st.session_state.plate_df = initialize_empty_plate()
+            st.rerun()
+
+    with col_map:
+        st.markdown("### Live Seeding Map")
+        # Custom legend for the sales narrative
+        st.markdown("""
+        <span style='color:#196F3D'>■ Sample</span> | 
+        <span style='color:#2980B9'>■ Pos Control</span> | 
+        <span style='color:#E74C3C'>■ Neg Control</span> | 
+        <span style='color:#F1C40F'>■ Blank</span>
+        """, unsafe_allow_html=True)
+        render_plate_map(st.session_state.plate_df, mode="design")
+
+# ---------------------------------------------------------
+# TAB 2: CULTIVATION & ANALYTICS
+# ---------------------------------------------------------
+with tab_analytics:
+    
+    # Place file uploader in a clean expander at the top instead of taking up sidebar space
+    with st.expander("🤖 Automation Connectors: Ingest Liquid Handler Run Files", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.download_button("📥 1. Download Mock Hamilton CSV", data=generate_mock_hamilton_csv(), file_name="hamilton_export.csv", mime="text/csv", use_container_width=True)
+        with c2:
+            uploaded_file = st.file_uploader("2. Upload CSV Run File", type=['csv'], label_visibility="collapsed")
+            if uploaded_file is not None:
+                handle_csv_upload(uploaded_file)
+
+    col_map2, col_details = st.columns([1.5, 1])
+
+    with col_map2:
+        st.markdown("### Interactive Analytics Map")
+        selected_wells = render_plate_map(st.session_state.plate_df, mode="analytics")
+
+    with col_details:
+        st.markdown("### Selection Details")
+        
+        if not selected_wells:
+            st.info("👈 Drag a box over the plate map to view metadata and analytics.")
+            
+        elif len(selected_wells) == 1:
+            selected_well = selected_wells[0]
+            well_data = st.session_state.plate_df[st.session_state.plate_df['well'] == selected_well].iloc[0]
+            
+            st.markdown(f"**Viewing Well:** `{selected_well}` | **Type:** `{well_data['well_type']}`")
+            
+            if well_data['well_type'] in ['Blank', 'Unassigned']:
+                st.warning(f"Well {selected_well} is configured as {well_data['well_type']}. No analytics tracking applied.")
+            else:
+                with st.expander("🧬 Upstream Registration", expanded=True):
+                    st.markdown(f"**Clone ID:** `{well_data['clone_id']}`")
+                    st.markdown(f"**Substance:** `{well_data['substance']}`")
+                    st.markdown(f"**Vector:** `{well_data['vector']}`")
+
+                with st.expander("🧪 Stability & Analytics", expanded=True):
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("VCD", well_data['vcd'])
+                    m2.metric("Titer", well_data['titer'])
+                    m3.metric("qp", calculate_specific_productivity(well_data['vcd'], well_data['titer']))
+                    
+        else:
+            st.markdown(f"**Viewing {len(selected_wells)} Selected Wells**")
+            multi_df = st.session_state.plate_df[st.session_state.plate_df['well'].isin(selected_wells)]
+            active_df = multi_df[multi_df['well_type'].isin(['Sample', 'Pos Control', 'Neg Control'])]
+            
+            if len(active_df) == 0:
+                st.warning("Selected wells do not contain any active samples.")
+            else:
+                st.success(f"{len(active_df)} active wells selected. Displaying aggregated view.")
+                st.dataframe(active_df[['well', 'well_type', 'clone_id', 'vcd', 'titer']], hide_index=True, use_container_width=True)
+                
+                m1, m2 = st.columns(2)
+                m1.metric("Average Sample VCD", f"{round(active_df[active_df['well_type']=='Sample']['vcd'].mean(), 2)} x10⁶")
+                m2.metric("Average Sample Titer", f"{round(active_df[active_df['well_type']=='Sample']['titer'].mean(), 1)} mg/L")
