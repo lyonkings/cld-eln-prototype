@@ -45,7 +45,7 @@ if 'hierarchy' not in st.session_state:
         'campaign': 'CMP-Q3-ScaleUp'
     }
 
-# Phase 1: Construct Library (Pre-loaded with DoE presets for instant sales demo)
+# Phase 1: Construct Library (Pre-loaded presets)
 if 'construct_library' not in st.session_state:
     st.session_state.construct_library = {
         "Preset A (Equimolar 1:1)": {
@@ -266,11 +266,11 @@ t1, t2, t3, t4 = st.tabs([
 ])
 
 # ---------------------------------------------------------
-# PHASE 1: CONSTRUCT LIBRARY (Multi-Blueprint DoE Manager)
+# PHASE 1: CONSTRUCT LIBRARY
 # ---------------------------------------------------------
 with t1:
-    st.markdown("### Upstream Construct Engineering & DoE Library")
-    st.write("Save multiple construct blueprints with varying plasmid ratios to test multi-variable DoE conditions on your microplates.")
+    st.markdown("### Upstream Construct Engineering & Registry")
+    st.write("Save and manage construct blueprints with varying plasmid ratios to assign across your microplates.")
     
     c1, c2 = st.columns([1.2, 1])
     with c1:
@@ -309,7 +309,7 @@ with t1:
                 st.markdown(f"**LC:HC Ratio:** `{details['ratio']}`")
 
 # ---------------------------------------------------------
-# PHASE 2: PLATE DESIGNER (Assign Any Preset to Wells)
+# PHASE 2: PLATE DESIGNER
 # ---------------------------------------------------------
 with t2:
     col_form, col_map = st.columns([1, 2])
@@ -323,7 +323,6 @@ with t2:
             target_cols = st.multiselect("Target Columns (Empty = All)", current_config["cols"])
             well_type = st.selectbox("Well Designation", ["Sample", "Pos Control", "Neg Control", "Blank", "Unassigned"])
             
-            # Select from saved Phase 1 construct blueprints
             selected_preset_key = st.selectbox(
                 "Select Construct Blueprint from Phase 1 Library", 
                 list(st.session_state.construct_library.keys())
@@ -431,11 +430,21 @@ with t3:
             if w_data['well_type'] not in ['Sample', 'Pos Control']:
                 st.warning("Selected well is empty or a control.")
             else:
+                is_bispecific = "bispecific" in str(w_data['substance']).lower() or "bispecific" in str(w_data['preset_name']).lower()
+                modality_label = "Bispecific Dual-Vector Assembly" if is_bispecific else "Monoclonal Single-Vector Pool"
+                
+                day0_detail = (
+                    f"Co-transfected dual-vector single-cell penned in `{w_data['parent_beacon_pen'] or 'BCN-PEN-402'}` (Dual-Fluorescence Screened)"
+                    if is_bispecific else
+                    f"Single-cell penned in `{w_data['parent_beacon_pen'] or 'BCN-PEN-402'}`"
+                )
+                
                 st.markdown(f"**Tracing Lineage for Clone:** `{w_data['clone_id']}`")
+                st.caption(f"Modality Track: **{modality_label}**")
                 st.markdown(f"""
                 * **Construct Blueprint:** `{w_data['preset_name']}` (Ratio: `{w_data['lc_hc_ratio']}`)
-                * **Day 0 (Beacon Optofluidics):** Single-cell penned in `{w_data['parent_beacon_pen'] or 'BCN-PEN-402'}` (VIPS Verified Monoclonal)
-                * **Day 7 (384-Well Plate):** Expanded in Well `C12`
+                * **Day 0 (Beacon Optofluidics):** {day0_detail}
+                * **Day 7 (384-Well Plate):** Expanded from Beacon pen into 384-DWP
                 * **Day 14 (96-Deep Well Plate):** Transitioned to Well `{w_data['well']}`
                 * **Day 25 (AMBR 15 Microbioreactor):** Vessel `{w_data['ambr_vessel_id'] or f'AMBR15-Vessel-{sel_well}'}` (pH: {w_data['ambr_ph']}, DO: {w_data['ambr_do_pct']}%)
                 """)
@@ -444,8 +453,6 @@ with t3:
                     st.info("⏳ **Status:** Awaiting AMBR Bioreactor Data Ingestion (VCD: 0.0, Titer: 0.0)")
                 else:
                     st.success(f"📊 **Ingested Data:** VCD = {w_data['vcd']} x10⁶ cells/mL | Titer = {w_data['titer']} mg/L")
-                
-                st.success("Monoclonality Audit: 100% Verified (Image Proof #IMG-9042)")
 
 # ---------------------------------------------------------
 # PHASE 4: CRITICAL QUALITY ATTRIBUTES (CQAs)
