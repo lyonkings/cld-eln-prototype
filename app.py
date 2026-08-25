@@ -174,6 +174,7 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
         x=df['col'], y=df['row'],
         mode='markers+text', 
         text=df['well'] if "384" not in format_name else None, 
+        customdata=df['well'].tolist(),
         textfont=dict(color=text_colors, size=9 if "384" in format_name else 11, family="Arial Black"),
         marker=dict(size=config["marker_size"], color=colors, line=dict(width=1 if "384" in format_name else 2, color='#BDC3C7')),
         hoverinfo='text', hovertext=hover_text
@@ -184,10 +185,10 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
         yaxis=dict(autorange='reversed', tickmode='array', tickvals=config["rows"], showgrid=False, zeroline=False),
         plot_bgcolor='white', paper_bgcolor='white',
         margin=dict(l=20, r=20, t=30, b=20), height=520,
-        clickmode='event+select', dragmode='select', hovermode='closest'
+        clickmode='event+select',
+        hovermode='closest'
     )
     
-    # Passed unique key parameter prevents StreamlitDuplicateElementId error
     event = st.plotly_chart(
         fig, 
         use_container_width=True, 
@@ -200,22 +201,23 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
     if event and hasattr(event, "selection") and event.selection:
         points = event.selection.get("points", [])
         for p in points:
-            if "point_index" in p:
-                selected_wells.append(df.iloc[p["point_index"]]["well"])
+            if "customdata" in p and p["customdata"]:
+                cd = p["customdata"]
+                selected_wells.append(cd[0] if isinstance(cd, list) else str(cd))
             elif "text" in p and p["text"]:
                 selected_wells.append(p["text"])
+            elif "point_index" in p and p["point_index"] is not None:
+                idx = p["point_index"]
+                if 0 <= idx < len(df):
+                    selected_wells.append(df.iloc[idx]["well"])
+            elif "x" in p and "y" in p and p["x"] is not None and p["y"] is not None:
+                selected_wells.append(f"{p['y']}{p['x']}")
                 
     return list(set(selected_wells))
 
 # ==========================================
 # 5. MAIN WORKFLOW TABS
 # ==========================================
-st.markdown(f"""
-<div style='background-color: #F4F6F6; padding: 10px; border-radius: 5px; margin-bottom: 10px; border-left: 4px solid #2980B9;'>
-    <b>Scope:</b> {st.session_state.hierarchy['project']} ➔ {st.session_state.hierarchy['study']} ➔ {st.session_state.hierarchy['campaign']} | <b>Vessel:</b> {st.session_state.selected_format}
-</div>
-""", unsafe_allow_html=True)
-
 t1, t2, t3, t4 = st.tabs([
     "🧬 Phase 1: Construct & Pool Design", 
     "🧫 Phase 2: Vessel & Plate Designer", 
@@ -303,6 +305,7 @@ with t2:
 
     with col_map:
         st.markdown(f"### Live Seeding Map ({st.session_state.selected_format})")
+        st.caption("💡 Click any individual well directly, or use the Box/Lasso select tools on the top-right toolbar.")
         st.markdown("<span style='color:#196F3D'>■ Sample</span> | <span style='color:#2980B9'>■ Pos Control</span> | <span style='color:#E74C3C'>■ Neg Control</span> | <span style='color:#F1C40F'>■ Blank</span>", unsafe_allow_html=True)
         render_plate_map(st.session_state.plate_df, st.session_state.selected_format, mode="design", chart_key="map_phase2")
 
@@ -335,7 +338,7 @@ with t3:
     with col_pedigree:
         st.markdown("### Clone Pedigree Tree")
         if not selected_wells_p3:
-            st.info("👈 Select a well on the map to trace its automated single-cell scale-up pedigree.")
+            st.info("👈 Click or select a well on the map to trace its automated single-cell scale-up pedigree.")
         else:
             sel_well = selected_wells_p3[0]
             w_data = st.session_state.plate_df[st.session_state.plate_df['well'] == sel_well].iloc[0]
@@ -344,7 +347,6 @@ with t3:
                 st.warning("Selected well is empty or a control.")
             else:
                 st.markdown(f"**Tracing Lineage for Clone:** `{w_data['clone_id']}`")
-                
                 st.markdown(f"""
                 * **Day 0 (Beacon Optofluidics):** Single-cell penned in `{w_data['parent_beacon_pen'] or 'BCN-PEN-402'}` (VIPS Verified Monoclonal)
                 * **Day 7 (384-Well Plate):** Expanded in Well `C12`
@@ -365,7 +367,7 @@ with t4:
         
     with col_cqas:
         if not selected_wells_p4:
-            st.info("👈 Select a clone to visualize its 70-day growth curve and glycosylation profile.")
+            st.info("👈 Click or select a clone to visualize its 70-day growth curve and glycosylation profile.")
         else:
             sel_w = selected_wells_p4[0]
             w_info = st.session_state.plate_df[st.session_state.plate_df['well'] == sel_w].iloc[0]
