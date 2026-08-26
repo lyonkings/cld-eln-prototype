@@ -134,10 +134,6 @@ def generate_jmp_export():
             'g0f_pct', 'charge_main_pct', 'ambr_ph']
     return active_df[cols].to_csv(index=False)
 
-def calculate_specific_productivity(vcd, titer):
-    if vcd == 0: return 0.0
-    return round((titer / (vcd * 10)) * 1.5, 2)
-
 # ==========================================
 # 3. SIDEBAR & NAVIGATION
 # ==========================================
@@ -216,7 +212,6 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
         customdata=df['well'].tolist(),
         textfont=dict(color=text_colors, size=9 if "384" in format_name else 11, family="Arial Black"),
         marker=dict(size=config["marker_size"], color=colors, line=dict(width=1 if "384" in format_name else 2, color='#BDC3C7')),
-        # Visual feedback: dims unselected wells so the user knows their click registered
         selected=dict(marker=dict(opacity=1.0)),
         unselected=dict(marker=dict(opacity=0.3)),
         hoverinfo='text', hovertext=hover_text
@@ -228,7 +223,7 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
         plot_bgcolor='white', paper_bgcolor='white',
         margin=dict(l=20, r=20, t=30, b=20), height=520,
         clickmode='event+select',
-        dragmode='pan', # Setting to pan prevents the 0-pixel box glitch and restores smooth clicking
+        dragmode=False, # STRICTLY FALSE: Forces the cursor into pure pointer/click mode
         hovermode='closest'
     )
     
@@ -253,8 +248,6 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
                 idx = p["point_index"]
                 if 0 <= idx < len(df):
                     selected_wells.append(df.iloc[idx]["well"])
-            elif "x" in p and "y" in p and p["x"] is not None and p["y"] is not None:
-                selected_wells.append(f"{p['y']}{p['x']}")
                 
     return list(set(selected_wells))
 
@@ -318,25 +311,35 @@ with t2:
     col_form, col_map = st.columns([1, 2])
     current_config = PLATE_FORMATS[st.session_state.selected_format]
     
-    # We render the map first in the right column so we can capture interactive selections
     with col_map:
         st.markdown(f"### Live Seeding Map ({st.session_state.selected_format})")
         st.caption("💡 **Tip:** Click any well, or hold **SHIFT** while clicking to select multiple wells instantly.")
         st.markdown("<span style='color:#196F3D'>■ Sample</span> | <span style='color:#2980B9'>■ Pos Control</span> | <span style='color:#E74C3C'>■ Neg Control</span> | <span style='color:#F1C40F'>■ Blank</span>", unsafe_allow_html=True)
         selected_wells_p2 = render_plate_map(st.session_state.plate_df, st.session_state.selected_format, mode="design", chart_key="map_phase2")
 
-    # Form renders in the left column
     with col_form:
         st.markdown(f"### Bulk Layout Designer")
         
-        target_mode = st.radio("Targeting Method", ["📍 Interactive Map Selection (Click/Shift-Click)", "🔲 Grid Range Selection"])
+        # ADDED: A fallback dropdown mode in case the browser eats the Shift key
+        target_mode = st.radio("Targeting Method", [
+            "📍 Interactive Map Selection (Click/Shift-Click)", 
+            "🎯 Specific Well Dropdown (Fallback)",
+            "🔲 Grid Range Selection"
+        ])
         
         if target_mode == "📍 Interactive Map Selection (Click/Shift-Click)":
             if len(selected_wells_p2) > 0:
                 st.success(f"**{len(selected_wells_p2)} wells currently selected on the map.**")
             else:
                 st.info("👈 Click or SHIFT+Click wells on the map to target them.")
-        else:
+                
+        elif target_mode == "🎯 Specific Well Dropdown (Fallback)":
+            all_plate_wells = [f"{r}{c}" for r in current_config["rows"] for c in current_config["cols"]]
+            manual_wells = st.multiselect("Search & Select Exact Wells (e.g., A1, C4)", all_plate_wells)
+            if len(manual_wells) > 0:
+                st.success(f"**{len(manual_wells)} wells manually selected.**")
+                
+        else: # Grid Range Selection
             c_r1, c_r2 = st.columns(2)
             start_row = c_r1.selectbox("Start Row", current_config["rows"], index=0)
             end_row = c_r2.selectbox("End Row", current_config["rows"], index=len(current_config["rows"])-1)
@@ -348,7 +351,6 @@ with t2:
         st.divider()
         well_type = st.selectbox("Well Designation", ["Sample", "Pos Control", "Neg Control", "Blank", "Unassigned"])
         
-        # CONDITIONAL UI LOGIC: Only show blueprints for actual active Samples
         if well_type == "Sample":
             selected_preset_key = st.selectbox("Select Construct Blueprint from Phase 1 Library", list(st.session_state.construct_library.keys()))
         else:
@@ -358,14 +360,20 @@ with t2:
         if st.button("Apply Designation to Target Wells", type="primary", use_container_width=True):
             df = st.session_state.plate_df
             
-            # Determine which wells we are masking
+            # Targeting Logic routing
             if target_mode == "📍 Interactive Map Selection (Click/Shift-Click)":
                 if not selected_wells_p2:
                     st.warning("No wells selected on the map. Please select wells first.")
                     st.stop()
                 mask = df['well'].isin(selected_wells_p2)
+                
+            elif target_mode == "🎯 Specific Well Dropdown (Fallback)":
+                if not manual_wells:
+                    st.warning("No wells selected in the dropdown.")
+                    st.stop()
+                mask = df['well'].isin(manual_wells)
+                
             else:
-                # Handle backwards ranges safely (e.g. if user selects End Row A and Start Row H)
                 rows_list = current_config["rows"]
                 r1, r2 = rows_list.index(start_row), rows_list.index(end_row)
                 r_min, r_max = min(r1, r2), max(r1, r2)
@@ -378,7 +386,7 @@ with t2:
                 selected_cols = cols_list[c_min:c_max+1]
                 mask = df['row'].isin(selected_rows) & df['col'].isin(selected_cols)
             
-            # Apply Logic
+            # Application Logic
             df.loc[mask, 'well_type'] = well_type
             
             if well_type == 'Sample':
@@ -396,7 +404,7 @@ with t2:
                 df.loc[mask, 'vector'] = 'None'
                 df.loc[mask, 'lc_hc_ratio'] = 'N/A'
             
-            else: # Blank / Unassigned
+            else: 
                 df.loc[mask, 'preset_name'] = 'Media Only' if well_type == 'Blank' else 'None'
                 df.loc[mask, 'substance'] = 'None'
                 df.loc[mask, 'host'] = 'None'
