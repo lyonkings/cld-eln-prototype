@@ -134,6 +134,10 @@ def generate_jmp_export():
             'g0f_pct', 'charge_main_pct', 'ambr_ph']
     return active_df[cols].to_csv(index=False)
 
+def calculate_specific_productivity(vcd, titer):
+    if vcd == 0: return 0.0
+    return round((titer / (vcd * 10)) * 1.5, 2)
+
 # ==========================================
 # 3. SIDEBAR & NAVIGATION
 # ==========================================
@@ -212,6 +216,9 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
         customdata=df['well'].tolist(),
         textfont=dict(color=text_colors, size=9 if "384" in format_name else 11, family="Arial Black"),
         marker=dict(size=config["marker_size"], color=colors, line=dict(width=1 if "384" in format_name else 2, color='#BDC3C7')),
+        # Visual feedback: dims unselected wells so the user knows their click registered
+        selected=dict(marker=dict(opacity=1.0)),
+        unselected=dict(marker=dict(opacity=0.3)),
         hoverinfo='text', hovertext=hover_text
     ))
 
@@ -221,7 +228,7 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
         plot_bgcolor='white', paper_bgcolor='white',
         margin=dict(l=20, r=20, t=30, b=20), height=520,
         clickmode='event+select',
-        dragmode='select', # Re-enabled to allow both clicking and smooth box lasso
+        dragmode='pan', # Setting to pan prevents the 0-pixel box glitch and restores smooth clicking
         hovermode='closest'
     )
     
@@ -322,11 +329,11 @@ with t2:
     with col_form:
         st.markdown(f"### Bulk Layout Designer")
         
-        target_mode = st.radio("Targeting Method", ["📍 Interactive Map Selection (Click/Lasso)", "🔲 Grid Range Selection"])
+        target_mode = st.radio("Targeting Method", ["📍 Interactive Map Selection (Click/Shift-Click)", "🔲 Grid Range Selection"])
         
-        if target_mode == "📍 Interactive Map Selection (Click/Lasso)":
+        if target_mode == "📍 Interactive Map Selection (Click/Shift-Click)":
             if len(selected_wells_p2) > 0:
-                st.success(f"**{len(selected_wells_p2)} wells selected on the map.**")
+                st.success(f"**{len(selected_wells_p2)} wells currently selected on the map.**")
             else:
                 st.info("👈 Click or SHIFT+Click wells on the map to target them.")
         else:
@@ -348,12 +355,11 @@ with t2:
             st.info(f"🧬 **{well_type}** selected. DNA construct blueprints are inherently not applied to blanks or reference controls.")
             selected_preset_key = None
         
-        # Submit Logic
         if st.button("Apply Designation to Target Wells", type="primary", use_container_width=True):
             df = st.session_state.plate_df
             
             # Determine which wells we are masking
-            if target_mode == "📍 Interactive Map Selection (Click/Lasso)":
+            if target_mode == "📍 Interactive Map Selection (Click/Shift-Click)":
                 if not selected_wells_p2:
                     st.warning("No wells selected on the map. Please select wells first.")
                     st.stop()
@@ -397,7 +403,6 @@ with t2:
                 df.loc[mask, 'vector'] = 'None'
                 df.loc[mask, 'lc_hc_ratio'] = 'None'
 
-            # Generate IDs and baseline metrics for occupied wells
             if well_type in ['Sample', 'Pos Control', 'Neg Control']:
                 df.loc[mask, 'vcd'] = 0.0
                 df.loc[mask, 'titer'] = 0.0
@@ -415,7 +420,6 @@ with t2:
                         
                         df.loc[idx, 'ambr_vessel_id'] = f"AMBR15-Vessel-{well_name}"
                         
-                        # Generate Mock CQA baselines
                         g0f = round(random.uniform(68.0, 78.0), 1)
                         g1f = round(random.uniform(12.0, 18.0), 1)
                         g2f = round(random.uniform(3.0, 7.0), 1)
