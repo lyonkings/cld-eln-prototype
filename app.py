@@ -100,7 +100,8 @@ def initialize_empty_plate(format_name):
 if 'selected_format' not in st.session_state:
     st.session_state.selected_format = "96-Well Plate (12x8)"
 
-if 'plate_df' not in st.session_state or 'preset_name' not in st.session_state.plate_df.columns:
+# FIX: Now explicitly checks if 'parent_384_well' is missing to force a clean re-initialization
+if 'plate_df' not in st.session_state or 'parent_384_well' not in st.session_state.plate_df.columns:
     st.session_state.plate_df = initialize_empty_plate(st.session_state.selected_format)
 
 # ==========================================
@@ -317,7 +318,6 @@ with t2:
         st.write("Use the range sliders below to rapidly assign blueprints to specific blocks/quadrants of the microplate.")
         
         with st.form("bulk_assignment_form"):
-            # Replaced multiselect with select_slider for rapid block mapping
             target_rows = st.select_slider("Target Row Range", options=current_config["rows"], value=(current_config["rows"][0], current_config["rows"][-1]))
             target_cols = st.select_slider("Target Column Range", options=current_config["cols"], value=(current_config["cols"][0], current_config["cols"][-1]))
             
@@ -333,7 +333,6 @@ with t2:
             if st.form_submit_button("Apply Blueprint to Vessel Map", use_container_width=True):
                 df = st.session_state.plate_df
                 
-                # Extract the continuous block from the sliders
                 r_start, r_end = target_rows
                 r_idx1, r_idx2 = current_config["rows"].index(r_start), current_config["rows"].index(r_end)
                 selected_rows = current_config["rows"][r_idx1:r_idx2+1]
@@ -365,7 +364,6 @@ with t2:
                             df.loc[idx, 'clone_id'] = f"CLN-{well_name}-{random.randint(1000,9999)}"
                             df.loc[idx, 'parent_beacon_pen'] = f"BCN-PEN-{random.randint(100,999)}"
                             
-                            # Generates a randomized Day 7 parent ID for the 384-Well plate
                             rand_row_384 = random.choice(list('ABCDEFGHIJKLMNOP'))
                             rand_col_384 = random.randint(1, 24)
                             df.loc[idx, 'parent_384_well'] = f"384-Well-{rand_row_384}{rand_col_384}"
