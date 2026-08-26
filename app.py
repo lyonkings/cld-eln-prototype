@@ -82,6 +82,7 @@ def initialize_empty_plate(format_name):
                 'well_type': 'Unassigned',
                 'clone_id': None,
                 'parent_beacon_pen': None,
+                'parent_384_well': None,
                 'ambr_vessel_id': None,
                 'preset_name': 'None',
                 'substance': 'None', 'host': 'None', 'vector': 'None', 
@@ -129,14 +130,10 @@ def generate_jmp_export():
     active_df['Study'] = st.session_state.hierarchy['study']
     active_df['Campaign'] = st.session_state.hierarchy['campaign']
     
-    cols = ['Project', 'Study', 'Campaign', 'well', 'clone_id', 'parent_beacon_pen', 'ambr_vessel_id',
+    cols = ['Project', 'Study', 'Campaign', 'well', 'clone_id', 'parent_beacon_pen', 'parent_384_well', 'ambr_vessel_id',
             'preset_name', 'substance', 'host', 'vector', 'lc_hc_ratio', 'vcd', 'titer', 
             'g0f_pct', 'charge_main_pct', 'ambr_ph']
     return active_df[cols].to_csv(index=False)
-
-def calculate_specific_productivity(vcd, titer):
-    if vcd == 0: return 0.0
-    return round((titer / (vcd * 10)) * 1.5, 2)
 
 # ==========================================
 # 3. SIDEBAR & NAVIGATION
@@ -317,10 +314,15 @@ with t2:
     
     with col_form:
         st.markdown(f"### Bulk Layout Designer")
+        st.write("Use the range sliders below to rapidly assign blueprints to specific blocks/quadrants of the microplate.")
         
         with st.form("bulk_assignment_form"):
-            target_rows = st.multiselect("Target Rows (Empty = All)", current_config["rows"])
-            target_cols = st.multiselect("Target Columns (Empty = All)", current_config["cols"])
+            # Replaced multiselect with select_slider for rapid block mapping
+            target_rows = st.select_slider("Target Row Range", options=current_config["rows"], value=(current_config["rows"][0], current_config["rows"][-1]))
+            target_cols = st.select_slider("Target Column Range", options=current_config["cols"], value=(current_config["cols"][0], current_config["cols"][-1]))
+            
+            st.divider()
+            
             well_type = st.selectbox("Well Designation", ["Sample", "Pos Control", "Neg Control", "Blank", "Unassigned"])
             
             selected_preset_key = st.selectbox(
@@ -330,8 +332,18 @@ with t2:
             
             if st.form_submit_button("Apply Blueprint to Vessel Map", use_container_width=True):
                 df = st.session_state.plate_df
-                r_mask = df['row'].isin(target_rows) if target_rows else pd.Series([True]*len(df))
-                c_mask = df['col'].isin(target_cols) if target_cols else pd.Series([True]*len(df))
+                
+                # Extract the continuous block from the sliders
+                r_start, r_end = target_rows
+                r_idx1, r_idx2 = current_config["rows"].index(r_start), current_config["rows"].index(r_end)
+                selected_rows = current_config["rows"][r_idx1:r_idx2+1]
+                
+                c_start, c_end = target_cols
+                c_idx1, c_idx2 = current_config["cols"].index(c_start), current_config["cols"].index(c_end)
+                selected_cols = current_config["cols"][c_idx1:c_idx2+1]
+                
+                r_mask = df['row'].isin(selected_rows)
+                c_mask = df['col'].isin(selected_cols)
                 mask = r_mask & c_mask
                 
                 chosen_preset = st.session_state.construct_library[selected_preset_key]
@@ -352,6 +364,12 @@ with t2:
                         if df.loc[idx, 'clone_id'] is None:
                             df.loc[idx, 'clone_id'] = f"CLN-{well_name}-{random.randint(1000,9999)}"
                             df.loc[idx, 'parent_beacon_pen'] = f"BCN-PEN-{random.randint(100,999)}"
+                            
+                            # Generates a randomized Day 7 parent ID for the 384-Well plate
+                            rand_row_384 = random.choice(list('ABCDEFGHIJKLMNOP'))
+                            rand_col_384 = random.randint(1, 24)
+                            df.loc[idx, 'parent_384_well'] = f"384-Well-{rand_row_384}{rand_col_384}"
+                            
                             df.loc[idx, 'ambr_vessel_id'] = f"AMBR15-Vessel-{well_name}"
                             
                             g0f = round(random.uniform(68.0, 78.0), 1)
@@ -378,6 +396,7 @@ with t2:
                     df.loc[mask, 'vector'] = 'None'
                     df.loc[mask, 'clone_id'] = None
                     df.loc[mask, 'parent_beacon_pen'] = None
+                    df.loc[mask, 'parent_384_well'] = None
                     df.loc[mask, 'ambr_vessel_id'] = None
                     df.loc[mask, 'vcd'] = 0.0
                     df.loc[mask, 'titer'] = 0.0
@@ -444,8 +463,8 @@ with t3:
                 st.markdown(f"""
                 * **Construct Blueprint:** `{w_data['preset_name']}` (Ratio: `{w_data['lc_hc_ratio']}`)
                 * **Day 0 (Beacon Optofluidics):** {day0_detail}
-                * **Day 7 (384-Well Plate):** Expanded from Beacon pen into 384-DWP
-                * **Day 14 (96-Deep Well Plate):** Transitioned to Well `{w_data['well']}`
+                * **Day 7 (384-Well Expansion Plate):** Expanded from Beacon pen into `{w_data['parent_384_well'] or '384-Well-C12'}`
+                * **Day 14 (Current Vessel):** Transitioned to Well `{w_data['well']}`
                 * **Day 25 (AMBR 15 Microbioreactor):** Vessel `{w_data['ambr_vessel_id'] or f'AMBR15-Vessel-{sel_well}'}` (pH: {w_data['ambr_ph']}, DO: {w_data['ambr_do_pct']}%)
                 """)
                 
