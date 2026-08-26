@@ -45,7 +45,6 @@ if 'hierarchy' not in st.session_state:
         'campaign': 'CMP-Q3-ScaleUp'
     }
 
-# Phase 1: Construct Library (Pre-loaded presets)
 if 'construct_library' not in st.session_state:
     st.session_state.construct_library = {
         "Preset A (Equimolar 1:1)": {
@@ -100,7 +99,6 @@ def initialize_empty_plate(format_name):
 if 'selected_format' not in st.session_state:
     st.session_state.selected_format = "96-Well Plate (12x8)"
 
-# FIX: Now explicitly checks if 'parent_384_well' is missing to force a clean re-initialization
 if 'plate_df' not in st.session_state or 'parent_384_well' not in st.session_state.plate_df.columns:
     st.session_state.plate_df = initialize_empty_plate(st.session_state.selected_format)
 
@@ -223,7 +221,7 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
         plot_bgcolor='white', paper_bgcolor='white',
         margin=dict(l=20, r=20, t=30, b=20), height=520,
         clickmode='event+select',
-        dragmode=False,
+        dragmode='select', # Re-enabled to allow both clicking and smooth box lasso
         hovermode='closest'
     )
     
@@ -259,8 +257,8 @@ def render_plate_map(df, format_name, mode="analytics", chart_key="plate_map"):
 t1, t2, t3, t4 = st.tabs([
     "🧬 Phase 1: Construct Library", 
     "🧫 Phase 2: Vessel & Plate Designer", 
-    "🌳 Phase 3: Lineage & AMBR Ingestion", 
-    "📈 Phase 4: Critical Quality Attributes (CQAs)"
+    "🌳 Phase 3: Lineage & AMBR", 
+    "📈 Phase 4: Critical Quality Attributes"
 ])
 
 # ---------------------------------------------------------
@@ -313,100 +311,138 @@ with t2:
     col_form, col_map = st.columns([1, 2])
     current_config = PLATE_FORMATS[st.session_state.selected_format]
     
-    with col_form:
-        st.markdown(f"### Bulk Layout Designer")
-        st.write("Use the range sliders below to rapidly assign blueprints to specific blocks/quadrants of the microplate.")
-        
-        with st.form("bulk_assignment_form"):
-            target_rows = st.select_slider("Target Row Range", options=current_config["rows"], value=(current_config["rows"][0], current_config["rows"][-1]))
-            target_cols = st.select_slider("Target Column Range", options=current_config["cols"], value=(current_config["cols"][0], current_config["cols"][-1]))
-            
-            st.divider()
-            
-            well_type = st.selectbox("Well Designation", ["Sample", "Pos Control", "Neg Control", "Blank", "Unassigned"])
-            
-            selected_preset_key = st.selectbox(
-                "Select Construct Blueprint from Phase 1 Library", 
-                list(st.session_state.construct_library.keys())
-            )
-            
-            if st.form_submit_button("Apply Blueprint to Vessel Map", use_container_width=True):
-                df = st.session_state.plate_df
-                
-                r_start, r_end = target_rows
-                r_idx1, r_idx2 = current_config["rows"].index(r_start), current_config["rows"].index(r_end)
-                selected_rows = current_config["rows"][r_idx1:r_idx2+1]
-                
-                c_start, c_end = target_cols
-                c_idx1, c_idx2 = current_config["cols"].index(c_start), current_config["cols"].index(c_end)
-                selected_cols = current_config["cols"][c_idx1:c_idx2+1]
-                
-                r_mask = df['row'].isin(selected_rows)
-                c_mask = df['col'].isin(selected_cols)
-                mask = r_mask & c_mask
-                
-                chosen_preset = st.session_state.construct_library[selected_preset_key]
-                
-                df.loc[mask, 'well_type'] = well_type
-                if well_type in ['Sample', 'Pos Control', 'Neg Control']:
-                    df.loc[mask, 'preset_name'] = selected_preset_key
-                    df.loc[mask, 'lc_hc_ratio'] = chosen_preset['ratio']
-                    df.loc[mask, 'substance'] = chosen_preset['substance']
-                    df.loc[mask, 'host'] = chosen_preset['host']
-                    df.loc[mask, 'vector'] = chosen_preset['vector']
-                    
-                    df.loc[mask, 'vcd'] = 0.0
-                    df.loc[mask, 'titer'] = 0.0
-                    
-                    for idx in df[mask].index:
-                        well_name = df.loc[idx, 'well']
-                        if df.loc[idx, 'clone_id'] is None:
-                            df.loc[idx, 'clone_id'] = f"CLN-{well_name}-{random.randint(1000,9999)}"
-                            df.loc[idx, 'parent_beacon_pen'] = f"BCN-PEN-{random.randint(100,999)}"
-                            
-                            rand_row_384 = random.choice(list('ABCDEFGHIJKLMNOP'))
-                            rand_col_384 = random.randint(1, 24)
-                            df.loc[idx, 'parent_384_well'] = f"384-Well-{rand_row_384}{rand_col_384}"
-                            
-                            df.loc[idx, 'ambr_vessel_id'] = f"AMBR15-Vessel-{well_name}"
-                            
-                            g0f = round(random.uniform(68.0, 78.0), 1)
-                            g1f = round(random.uniform(12.0, 18.0), 1)
-                            g2f = round(random.uniform(3.0, 7.0), 1)
-                            man5 = round(100.0 - (g0f + g1f + g2f), 1)
-                            
-                            main_p = round(random.uniform(62.0, 74.0), 1)
-                            acidic_p = round(random.uniform(18.0, 26.0), 1)
-                            basic_p = round(100.0 - (main_p + acidic_p), 1)
-                            
-                            df.loc[idx, 'g0f_pct'] = g0f
-                            df.loc[idx, 'g1f_pct'] = g1f
-                            df.loc[idx, 'g2f_pct'] = g2f
-                            df.loc[idx, 'man5_pct'] = man5
-                            
-                            df.loc[idx, 'charge_main_pct'] = main_p
-                            df.loc[idx, 'charge_acidic_pct'] = acidic_p
-                            df.loc[idx, 'charge_basic_pct'] = basic_p
-                else:
-                    df.loc[mask, 'preset_name'] = 'None'
-                    df.loc[mask, 'substance'] = 'None'
-                    df.loc[mask, 'host'] = 'None'
-                    df.loc[mask, 'vector'] = 'None'
-                    df.loc[mask, 'clone_id'] = None
-                    df.loc[mask, 'parent_beacon_pen'] = None
-                    df.loc[mask, 'parent_384_well'] = None
-                    df.loc[mask, 'ambr_vessel_id'] = None
-                    df.loc[mask, 'vcd'] = 0.0
-                    df.loc[mask, 'titer'] = 0.0
-                    
-                st.session_state.plate_df = df
-                st.rerun()
-
+    # We render the map first in the right column so we can capture interactive selections
     with col_map:
         st.markdown(f"### Live Seeding Map ({st.session_state.selected_format})")
-        st.caption("💡 Click any well directly to inspect, or use the Box/Lasso tools on the toolbar.")
+        st.caption("💡 **Tip:** Click any well, or hold **SHIFT** while clicking to select multiple wells instantly.")
         st.markdown("<span style='color:#196F3D'>■ Sample</span> | <span style='color:#2980B9'>■ Pos Control</span> | <span style='color:#E74C3C'>■ Neg Control</span> | <span style='color:#F1C40F'>■ Blank</span>", unsafe_allow_html=True)
-        render_plate_map(st.session_state.plate_df, st.session_state.selected_format, mode="design", chart_key="map_phase2")
+        selected_wells_p2 = render_plate_map(st.session_state.plate_df, st.session_state.selected_format, mode="design", chart_key="map_phase2")
+
+    # Form renders in the left column
+    with col_form:
+        st.markdown(f"### Bulk Layout Designer")
+        
+        target_mode = st.radio("Targeting Method", ["📍 Interactive Map Selection (Click/Lasso)", "🔲 Grid Range Selection"])
+        
+        if target_mode == "📍 Interactive Map Selection (Click/Lasso)":
+            if len(selected_wells_p2) > 0:
+                st.success(f"**{len(selected_wells_p2)} wells selected on the map.**")
+            else:
+                st.info("👈 Click or SHIFT+Click wells on the map to target them.")
+        else:
+            c_r1, c_r2 = st.columns(2)
+            start_row = c_r1.selectbox("Start Row", current_config["rows"], index=0)
+            end_row = c_r2.selectbox("End Row", current_config["rows"], index=len(current_config["rows"])-1)
+            
+            c_c1, c_c2 = st.columns(2)
+            start_col = c_c1.selectbox("Start Column", current_config["cols"], index=0)
+            end_col = c_c2.selectbox("End Column", current_config["cols"], index=len(current_config["cols"])-1)
+        
+        st.divider()
+        well_type = st.selectbox("Well Designation", ["Sample", "Pos Control", "Neg Control", "Blank", "Unassigned"])
+        
+        # CONDITIONAL UI LOGIC: Only show blueprints for actual active Samples
+        if well_type == "Sample":
+            selected_preset_key = st.selectbox("Select Construct Blueprint from Phase 1 Library", list(st.session_state.construct_library.keys()))
+        else:
+            st.info(f"🧬 **{well_type}** selected. DNA construct blueprints are inherently not applied to blanks or reference controls.")
+            selected_preset_key = None
+        
+        # Submit Logic
+        if st.button("Apply Designation to Target Wells", type="primary", use_container_width=True):
+            df = st.session_state.plate_df
+            
+            # Determine which wells we are masking
+            if target_mode == "📍 Interactive Map Selection (Click/Lasso)":
+                if not selected_wells_p2:
+                    st.warning("No wells selected on the map. Please select wells first.")
+                    st.stop()
+                mask = df['well'].isin(selected_wells_p2)
+            else:
+                # Handle backwards ranges safely (e.g. if user selects End Row A and Start Row H)
+                rows_list = current_config["rows"]
+                r1, r2 = rows_list.index(start_row), rows_list.index(end_row)
+                r_min, r_max = min(r1, r2), max(r1, r2)
+                
+                cols_list = current_config["cols"]
+                c1, c2 = cols_list.index(start_col), cols_list.index(end_col)
+                c_min, c_max = min(c1, c2), max(c1, c2)
+                
+                selected_rows = rows_list[r_min:r_max+1]
+                selected_cols = cols_list[c_min:c_max+1]
+                mask = df['row'].isin(selected_rows) & df['col'].isin(selected_cols)
+            
+            # Apply Logic
+            df.loc[mask, 'well_type'] = well_type
+            
+            if well_type == 'Sample':
+                chosen_preset = st.session_state.construct_library[selected_preset_key]
+                df.loc[mask, 'preset_name'] = selected_preset_key
+                df.loc[mask, 'lc_hc_ratio'] = chosen_preset['ratio']
+                df.loc[mask, 'substance'] = chosen_preset['substance']
+                df.loc[mask, 'host'] = chosen_preset['host']
+                df.loc[mask, 'vector'] = chosen_preset['vector']
+            
+            elif well_type in ['Pos Control', 'Neg Control']:
+                df.loc[mask, 'preset_name'] = 'Historical Reference' if well_type == 'Pos Control' else 'Mock/Untransfected'
+                df.loc[mask, 'substance'] = 'Reference Standard' if well_type == 'Pos Control' else 'None'
+                df.loc[mask, 'host'] = 'HST-CHO-S (Reference Bank)' if well_type == 'Pos Control' else 'HST-CHO-S (Wildtype)'
+                df.loc[mask, 'vector'] = 'None'
+                df.loc[mask, 'lc_hc_ratio'] = 'N/A'
+            
+            else: # Blank / Unassigned
+                df.loc[mask, 'preset_name'] = 'Media Only' if well_type == 'Blank' else 'None'
+                df.loc[mask, 'substance'] = 'None'
+                df.loc[mask, 'host'] = 'None'
+                df.loc[mask, 'vector'] = 'None'
+                df.loc[mask, 'lc_hc_ratio'] = 'None'
+
+            # Generate IDs and baseline metrics for occupied wells
+            if well_type in ['Sample', 'Pos Control', 'Neg Control']:
+                df.loc[mask, 'vcd'] = 0.0
+                df.loc[mask, 'titer'] = 0.0
+                
+                for idx in df[mask].index:
+                    well_name = df.loc[idx, 'well']
+                    if df.loc[idx, 'clone_id'] is None:
+                        prefix = "CLN" if well_type == 'Sample' else ("CTRL-POS" if well_type == 'Pos Control' else "CTRL-NEG")
+                        df.loc[idx, 'clone_id'] = f"{prefix}-{well_name}-{random.randint(1000,9999)}"
+                        df.loc[idx, 'parent_beacon_pen'] = f"BCN-PEN-{random.randint(100,999)}"
+                        
+                        rand_row_384 = random.choice(list('ABCDEFGHIJKLMNOP'))
+                        rand_col_384 = random.randint(1, 24)
+                        df.loc[idx, 'parent_384_well'] = f"384-Well-{rand_row_384}{rand_col_384}"
+                        
+                        df.loc[idx, 'ambr_vessel_id'] = f"AMBR15-Vessel-{well_name}"
+                        
+                        # Generate Mock CQA baselines
+                        g0f = round(random.uniform(68.0, 78.0), 1)
+                        g1f = round(random.uniform(12.0, 18.0), 1)
+                        g2f = round(random.uniform(3.0, 7.0), 1)
+                        man5 = round(100.0 - (g0f + g1f + g2f), 1)
+                        
+                        main_p = round(random.uniform(62.0, 74.0), 1)
+                        acidic_p = round(random.uniform(18.0, 26.0), 1)
+                        basic_p = round(100.0 - (main_p + acidic_p), 1)
+                        
+                        df.loc[idx, 'g0f_pct'] = g0f
+                        df.loc[idx, 'g1f_pct'] = g1f
+                        df.loc[idx, 'g2f_pct'] = g2f
+                        df.loc[idx, 'man5_pct'] = man5
+                        
+                        df.loc[idx, 'charge_main_pct'] = main_p
+                        df.loc[idx, 'charge_acidic_pct'] = acidic_p
+                        df.loc[idx, 'charge_basic_pct'] = basic_p
+            else:
+                df.loc[mask, 'clone_id'] = None
+                df.loc[mask, 'parent_beacon_pen'] = None
+                df.loc[mask, 'parent_384_well'] = None
+                df.loc[mask, 'ambr_vessel_id'] = None
+                df.loc[mask, 'vcd'] = 0.0
+                df.loc[mask, 'titer'] = 0.0
+                
+            st.session_state.plate_df = df
+            st.rerun()
 
 # ---------------------------------------------------------
 # PHASE 3: LINEAGE & AMBR BIOREACTOR INGESTION
@@ -444,11 +480,11 @@ with t3:
             sel_well = selected_wells_p3[0]
             w_data = st.session_state.plate_df[st.session_state.plate_df['well'] == sel_well].iloc[0]
             
-            if w_data['well_type'] not in ['Sample', 'Pos Control']:
-                st.warning("Selected well is empty or a control.")
+            if w_data['well_type'] not in ['Sample', 'Pos Control', 'Neg Control']:
+                st.warning("Selected well is a blank or unassigned.")
             else:
                 is_bispecific = "bispecific" in str(w_data['substance']).lower() or "bispecific" in str(w_data['preset_name']).lower()
-                modality_label = "Bispecific Dual-Vector Assembly" if is_bispecific else "Monoclonal Single-Vector Pool"
+                modality_label = "Bispecific Dual-Vector Assembly" if is_bispecific else ("Historic Reference" if w_data['well_type'] == 'Pos Control' else "Monoclonal Single-Vector Pool")
                 
                 day0_detail = (
                     f"Co-transfected dual-vector single-cell penned in `{w_data['parent_beacon_pen'] or 'BCN-PEN-402'}` (Dual-Fluorescence Screened)"
@@ -456,7 +492,7 @@ with t3:
                     f"Single-cell penned in `{w_data['parent_beacon_pen'] or 'BCN-PEN-402'}`"
                 )
                 
-                st.markdown(f"**Tracing Lineage for Clone:** `{w_data['clone_id']}`")
+                st.markdown(f"**Tracing Lineage for:** `{w_data['clone_id']}`")
                 st.caption(f"Modality Track: **{modality_label}**")
                 st.markdown(f"""
                 * **Construct Blueprint:** `{w_data['preset_name']}` (Ratio: `{w_data['lc_hc_ratio']}`)
@@ -466,7 +502,7 @@ with t3:
                 * **Day 25 (AMBR 15 Microbioreactor):** Vessel `{w_data['ambr_vessel_id'] or f'AMBR15-Vessel-{sel_well}'}` (pH: {w_data['ambr_ph']}, DO: {w_data['ambr_do_pct']}%)
                 """)
                 
-                if w_data['vcd'] == 0.0 and w_data['titer'] == 0.0:
+                if w_data['vcd'] == 0.0 and w_data['titer'] == 0.0 and w_data['well_type'] != 'Neg Control':
                     st.info("⏳ **Status:** Awaiting AMBR Bioreactor Data Ingestion (VCD: 0.0, Titer: 0.0)")
                 else:
                     st.success(f"📊 **Ingested Data:** VCD = {w_data['vcd']} x10⁶ cells/mL | Titer = {w_data['titer']} mg/L")
